@@ -6,3 +6,6 @@
 .fork-built-at
 .fork-launch.lock/
 
+# local Windows build tools (protoc 29.3 win64, etc.)
+.tools/
+
