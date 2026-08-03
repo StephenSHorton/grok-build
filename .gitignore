@@ -1,3 +1,8 @@
 /target
 **/*.rs.bk
 .DS_Store
+
+# fork launcher state
+.fork-built-at
+.fork-launch.lock/
+
