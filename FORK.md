@@ -1,28 +1,32 @@
-# Personal fork notes
+# Stephen’s Grok Build fork
 
-This tree is a **personal fork** of [xai-org/grok-build](https://github.com/xai-org/grok-build).
-It is not the official product and is not a community-maintained alternative.
+Personal fork of [xai-org/grok-build](https://github.com/xai-org/grok-build).
+Not the official product.
 
-Official installs and docs stay at [x.ai/cli](https://x.ai/cli) and
-[docs.x.ai/build](https://docs.x.ai/build/overview).
+## Patches on `main`
+
+| Patch | Notes |
+|-------|--------|
+| **Transparent canvas** | App canvas BGs cleared (`Color::Reset`) so the host underlay (e.g. suzuri rain) shows through. **Selection / hover bands kept** (`bg_visual`, `bg_hover`, `bg_highlight`) so list pickers stay readable. Opt out: `GROK_SOLID_BG=1` |
+| Launch wrappers | `scripts/grok` (macOS/Linux), `scripts/grok.ps1` (Windows) — optional sync/rebuild on start |
+| Install helpers | `scripts/install-local.sh` — copy release binary over stock `~/.grok/bin` |
+
+- **Upstream remote:** `upstream` → `xai-org/grok-build`
+- **Fork daily-driver branch:** `main` (not a side branch)
+- Official docs/install: [x.ai/cli](https://x.ai/cli) · [docs.x.ai/build](https://docs.x.ai/build/overview)
+
+`SOURCE_REV` is the monorepo commit SHA for this tree.
 
 ## Remotes
-
-| Remote | URL |
-|--------|-----|
-| `origin` | your fork (e.g. `git@github.com:StephenSHorton/grok-build.git`) |
-| `upstream` | `https://github.com/xai-org/grok-build.git` |
 
 ```bash
 git remote add upstream https://github.com/xai-org/grok-build.git   # once
 git fetch upstream
-git merge upstream/main   # or rebase; keep main a clean mirror if you prefer
+# prefer: rebase/merge upstream into main, then re-apply is automatic if patches stay on main
 ```
 
-**Policy:** prefer custom work on feature branches. Keep `main` easy to fast-forward
-from upstream when the public tree is re-synced from the monorepo.
-
-`SOURCE_REV` is the monorepo commit SHA for this tree.
+Keep personal patches on `main` (or merge feature branches into `main` before installing).
+Do not leave the daily-driver patches only on a side branch.
 
 ## Daily driver install (replace stock `grok`)
 
@@ -30,98 +34,71 @@ Stock CLI lives under `~/.grok/`:
 
 | Path | Role |
 |------|------|
-| `~/.grok/bin/grok` | symlink used by `PATH` |
+| `~/.grok/bin/grok` | symlink used by `PATH` (this machine’s installer puts `~/.grok/bin` first) |
 | `~/.grok/bin/agent` | same binary, agent entrypoint |
 | `~/.grok/downloads/` | versioned binaries |
 | `~/.grok/config.toml` | settings (`auto_update`, …) |
 
-### One-shot script
-
-From the repo root:
+### Recommended: build + install into `~/.grok`
 
 ```bash
-./scripts/install-local.sh            # release build + install + disable auto_update
-./scripts/install-local.sh --skip-build   # install existing target/release/xai-grok-pager
-./scripts/install-local.sh --rollback     # point bin/ back at latest stock download
+./scripts/install-local.sh              # release build + install + auto_update=false
+./scripts/install-local.sh --skip-build # install existing target/release/xai-grok-pager
+./scripts/install-local.sh --rollback   # newest stock download under downloads/
 ```
 
-### Manual steps
-
-Requirements: Rust (see `rust-toolchain.toml`), [DotSlash](https://dotslash-cli.com)
-on `PATH` (`cargo install dotslash`), and `protoc` via `./bin/protoc` or system.
+### Alternative: wrapper launcher (sync + rebuild + run)
 
 ```bash
-# 1. Build
+# Point a name on PATH at the repo wrapper (prefer after ~/.grok/bin, or replace it):
+ln -sfn ~/projects/grok-build/scripts/grok ~/.local/bin/grok-fork
+
+GROK_FORK_BRANCH=main ~/.local/bin/grok-fork --version
+# defaults: GROK_FORK_REPO=~/projects/grok-build, GROK_FORK_BRANCH=main
+```
+
+Env skips:
+
+| Var | Effect |
+|-----|--------|
+| `GROK_SKIP_SYNC=1` | don’t fetch/rebase upstream |
+| `GROK_SKIP_REBUILD=1` | don’t cargo build |
+| `GROK_SOLID_BG=1` | stock solid backgrounds |
+
+### Manual build
+
+```bash
+cargo install dotslash   # once; bin/protoc
 cargo build -p xai-grok-pager-bin --release
 # → target/release/xai-grok-pager
-
-# 2. Install next to stock downloads (name is fixed so reinstalls overwrite cleanly)
-cp -f target/release/xai-grok-pager ~/.grok/downloads/grok-fork-macos-aarch64
-chmod +x ~/.grok/downloads/grok-fork-macos-aarch64
-
-# 3. Point CLI entrypoints at the fork
-ln -sfn ../downloads/grok-fork-macos-aarch64 ~/.grok/bin/grok
-ln -sfn ../downloads/grok-fork-macos-aarch64 ~/.grok/bin/agent
-
-# 4. Stop stock channel from overwriting you on launch
-# In ~/.grok/config.toml under [cli]:
-#   auto_update = false
 ```
 
-Verify in a **new** shell (current sessions keep the old binary in memory):
+## Windows
 
-```bash
-which grok
-grok --version   # expect a local build, e.g. 0.2.119 (gitsha) [alpha]
+Stock install: `%USERPROFILE%\.grok\bin\`. First install can back up as
+`grok.upstream.exe` / `agent.upstream.exe`.
+
+```powershell
+& "$HOME\projects\grok-build\scripts\grok.ps1" --version
+# or after a release build:
+Copy-Item target\release\xai-grok-pager.exe $HOME\.grok\bin\grok.exe -Force
+Copy-Item target\release\xai-grok-pager.exe $HOME\.grok\bin\agent.exe -Force
 ```
 
-### Roll back to stock
+- Hermetic `bin/protoc` has no Windows entry — install protoc 29.3 / set `PROTOC`, or use `.tools/protoc/` (gitignored).
+- `xai-proto-build` uses temp files instead of `/dev/stdout` so protoc dep scanning works on Windows.
+- Skips: `$env:GROK_SKIP_SYNC`, `GROK_SKIP_REBUILD`, `GROK_SKIP_INSTALL`
 
-```bash
-./scripts/install-local.sh --rollback
-# or manually:
-ln -sfn ../downloads/grok-0.2.118-macos-aarch64 ~/.grok/bin/grok   # pick a stock file you still have
-ln -sfn ../downloads/grok-0.2.118-macos-aarch64 ~/.grok/bin/agent
-# re-enable updates if you want:
-#   auto_update = true
-```
-
-### Rebuild after code changes
-
-```bash
-./scripts/install-local.sh
-# same as: build → copy → relink
-```
-
-## Auto-update and `grok update`
-
-| Action | Effect on a fork install |
-|--------|--------------------------|
-| Launch with `auto_update = true` (default) | May download stock and re-point `bin/` |
-| `grok update` | Pulls official release channel — **not** this fork |
-| `auto_update = false` | Safe for daily-driver fork use |
-
-Do not rely on the in-app updater for fork builds. Sync git + rebuild instead.
-
-## Config / data
-
-Fork and stock share the same home layout:
-
-- Config: `~/.grok/config.toml`
-- Auth: `~/.grok/auth.json`
-- Sessions, memory, skills, plugins: under `~/.grok/`
-
-No separate config profile is required. Only the binary under `bin/` changes.
+**Do not run stock `grok update`** — it overwrites the fork binary. Use rebuild + reinstall
+(`install-local.sh` / `grok.ps1`) instead. Keep `auto_update = false` in config.
 
 ## Docs in this tree
 
 | Doc | Status |
 |-----|--------|
 | This file (`FORK.md`) | Fork-specific; safe to edit |
-| Root `README.md` | Fork banner + pointers; upstream build notes retained |
-| `crates/.../docs/user-guide/` | Upstream product docs; **avoid fork-only edits** (monorepo sync overwrites) |
-
-Product behavior docs: use the shipped user guide or [docs.x.ai/build](https://docs.x.ai/build/overview).
+| Root `README.md` | Fork banner + pointers |
+| `crates/.../docs/user-guide/` | Upstream product docs — avoid fork-only edits (monorepo sync) |
 
 ## License
 
