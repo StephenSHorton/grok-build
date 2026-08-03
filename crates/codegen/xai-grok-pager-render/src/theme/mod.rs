@@ -26,6 +26,22 @@ pub mod tokyonight;
 pub use color_support::quantize;
 pub use tokyonight::{Theme, pulse_brightness, wave_brightness};
 
+/// Whether themed (non-minimal) rendering should leave canvas backgrounds
+/// transparent (`Color::Reset`) so the terminal's own background shows.
+///
+/// Default **on** in this local fork. Set `GROK_SOLID_BG=1` (or `true`/`yes`)
+/// to restore stock solid theme backgrounds.
+#[must_use]
+pub fn transparent_canvas_enabled() -> bool {
+    match std::env::var("GROK_SOLID_BG") {
+        Ok(v) => {
+            let v = v.trim().to_ascii_lowercase();
+            !(v == "1" || v == "true" || v == "yes" || v == "on")
+        }
+        Err(_) => true,
+    }
+}
+
 /// Available theme variants.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ThemeKind {
@@ -300,14 +316,43 @@ impl Theme {
         // explicit gate on the legacy-Windows arm, `ansi16_chrome_overrides`
         // would repaint `Color::Reset` slots with named ANSI colors and
         // partially defeat the user's opt-out on ConHost.
-        if level.has_color()
+        let adapted = if level.has_color()
             && (level == color_support::ColorLevel::Basic
                 || (crate::glyphs::is_legacy_windows_console() && !level.has_truecolor()))
         {
             adapted.ansi16_chrome_overrides(dark)
         } else {
             adapted
+        };
+        // Local fork default: let the terminal canvas show through (no solid
+        // painted app background). Opt out with GROK_SOLID_BG=1.
+        if transparent_canvas_enabled() {
+            adapted.with_transparent_canvas()
+        } else {
+            adapted
         }
+    }
+
+    /// Clear solid canvas backgrounds so the terminal's own background
+    /// (including transparency / wallpaper) shows through. Accents, text,
+    /// and semantic colors are left intact.
+    #[must_use]
+    pub fn with_transparent_canvas(mut self) -> Self {
+        use ratatui::style::Color;
+        self.bg_base = Color::Reset;
+        self.bg_light = Color::Reset;
+        self.bg_dark = Color::Reset;
+        self.bg_highlight = Color::Reset;
+        self.bg_hover = Color::Reset;
+        self.bg_terminal = Color::Reset;
+        self.bg_visual = Color::Reset;
+        self.scrollbar_bg = Color::Reset;
+        self.md_code_bg = Color::Reset;
+        self.paste_bg = Color::Reset;
+        // Diff bands: Reset triggers whole-line fg mode via diff_uses_line_fg().
+        self.diff_delete_bg = Color::Reset;
+        self.diff_insert_bg = Color::Reset;
+        self
     }
 
     /// Get the currently active theme kind.
@@ -726,6 +771,23 @@ mod tests {
         assert!(Theme::rosepine_moon().is_dark());
         assert!(Theme::oscura_midnight().is_dark());
         assert!(!Theme::grokday().is_dark());
+    }
+
+    #[test]
+    fn with_transparent_canvas_resets_canvas_backgrounds() {
+        use ratatui::style::Color;
+        let solid = Theme::groknight();
+        assert!(!matches!(solid.bg_base, Color::Reset));
+        let t = solid.with_transparent_canvas();
+        assert_eq!(t.bg_base, Color::Reset);
+        assert_eq!(t.bg_terminal, Color::Reset);
+        assert_eq!(t.md_code_bg, Color::Reset);
+        assert_eq!(t.diff_delete_bg, Color::Reset);
+        assert_eq!(t.diff_insert_bg, Color::Reset);
+        // Accents kept so themed chrome still has color.
+        assert_eq!(t.accent_assistant, Theme::groknight().accent_assistant);
+        assert_eq!(t.text_primary, Theme::groknight().text_primary);
+        assert!(t.diff_uses_line_fg());
     }
 
     #[test]
