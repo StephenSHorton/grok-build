@@ -21,7 +21,7 @@ set -uo pipefail
 # Note: not `set -e` — prefer launching over dying mid-sync.
 
 REPO="${GROK_FORK_REPO:-$HOME/projects/grok-build}"
-BRANCH="${GROK_FORK_BRANCH:-fork/transparent-bg}"
+BRANCH="${GROK_FORK_BRANCH:-main}"
 UPSTREAM_REMOTE="${GROK_UPSTREAM_REMOTE:-upstream}"
 UPSTREAM_REF="${GROK_UPSTREAM_REF:-main}"
 BIN="${GROK_FORK_BIN:-$REPO/target/release/xai-grok-pager}"
