@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Install a self-built grok binary as the daily driver under ~/.grok/
 # (replaces stock bin/grok + bin/agent symlinks without deleting stock downloads).
+#
+# Always maintains ~/.grok/bin/grok-official — escape hatch to stock even when
+# bin/grok is the fork. Never overwritten by fork install.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -11,9 +14,11 @@ FORK_NAME="grok-fork-macos-aarch64"
 FORK_PATH="$DOWNLOADS/$FORK_NAME"
 BINARY="$REPO_ROOT/target/release/xai-grok-pager"
 PACKAGE="xai-grok-pager-bin"
+OFFICIAL_SCRIPT_SRC="$REPO_ROOT/scripts/grok-official"
 
 SKIP_BUILD=0
 ROLLBACK=0
+ENSURE_OFFICIAL=0
 DISABLE_AUTO_UPDATE=1
 
 usage() {
@@ -21,15 +26,21 @@ usage() {
 Usage: ./scripts/install-local.sh [options]
 
   Install this repo's release binary as ~/.grok/bin/grok (and agent).
+  Always refreshes ~/.grok/bin/grok-official → stock escape hatch.
 
 Options:
   --skip-build       Use existing target/release/xai-grok-pager (do not cargo build)
-  --rollback         Point bin/ at the newest stock download (not the fork)
+  --rollback         Point bin/grok at the newest stock download (not the fork)
+  --ensure-official  Only install/update grok-official (no build / no fork link)
   --keep-auto-update Do not set auto_update = false in ~/.grok/config.toml
   -h, --help         Show this help
 
 Environment:
   GROK_HOME          Install root (default: ~/.grok)
+
+Escape hatch (always stock, even when grok is the fork):
+  grok-official --version
+  grok-official
 EOF
 }
 
@@ -37,6 +48,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --skip-build) SKIP_BUILD=1; shift ;;
     --rollback) ROLLBACK=1; shift ;;
+    --ensure-official) ENSURE_OFFICIAL=1; shift ;;
     --keep-auto-update) DISABLE_AUTO_UPDATE=0; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
@@ -50,18 +62,23 @@ ensure_layout() {
 }
 
 newest_stock_binary() {
-  # Prefer versioned stock names; ignore our fork install name.
+  # Prefer official installer's canonical name, then versioned; never *fork*.
+  if [[ -x "$DOWNLOADS/grok-macos-aarch64" ]]; then
+    printf '%s' "$DOWNLOADS/grok-macos-aarch64"
+    return 0
+  fi
+  if [[ -x "$DOWNLOADS/grok-macos-x86_64" ]]; then
+    printf '%s' "$DOWNLOADS/grok-macos-x86_64"
+    return 0
+  fi
   local candidate=""
   # shellcheck disable=SC2012
   candidate="$(
-    ls -1t "$DOWNLOADS"/grok-*-macos-aarch64 2>/dev/null \
-      | grep -v 'fork' \
+    ls -1t "$DOWNLOADS"/grok-*-macos-* 2>/dev/null \
+      | grep -vE 'fork|staging' \
       | head -1 \
       || true
   )"
-  if [[ -z "$candidate" && -x "$DOWNLOADS/grok-macos-aarch64" ]]; then
-    candidate="$DOWNLOADS/grok-macos-aarch64"
-  fi
   printf '%s' "$candidate"
 }
 
@@ -71,6 +88,42 @@ link_bin() {
   ln -sfn "$target_rel" "$BIN_DIR/agent"
   echo "linked $BIN_DIR/grok -> $target_rel"
   echo "linked $BIN_DIR/agent -> $target_rel"
+}
+
+# Install grok-official launcher (always stock). Never points at the fork.
+install_official_escape() {
+  ensure_layout
+  [[ -f "$OFFICIAL_SCRIPT_SRC" ]] || die "missing $OFFICIAL_SCRIPT_SRC"
+
+  # Real script in bin/ (not a symlink into the repo) so it keeps working if
+  # the checkout moves; re-copied on every install.
+  cp -f "$OFFICIAL_SCRIPT_SRC" "$BIN_DIR/grok-official"
+  chmod +x "$BIN_DIR/grok-official"
+  # Same binary entry for agent users who type agent-official.
+  ln -sfn "grok-official" "$BIN_DIR/agent-official"
+
+  # Optional: also land on ~/.local/bin if that dir exists (extra PATH safety).
+  local local_bin="${HOME}/.local/bin"
+  if [[ -d "$local_bin" ]]; then
+    cp -f "$OFFICIAL_SCRIPT_SRC" "$local_bin/grok-official"
+    chmod +x "$local_bin/grok-official"
+    ln -sfn "grok-official" "$local_bin/agent-official" 2>/dev/null || true
+    echo "also installed $local_bin/grok-official"
+  fi
+
+  local stock
+  stock="$(newest_stock_binary)"
+  if [[ -n "$stock" && -x "$stock" ]]; then
+    echo "linked escape hatch: $BIN_DIR/grok-official → stock $(basename "$stock")"
+    if "$BIN_DIR/grok-official" --version >/dev/null 2>&1; then
+      echo -n "  grok-official --version → "
+      "$BIN_DIR/grok-official" --version
+    else
+      echo "warning: grok-official could not run stock binary at $stock" >&2
+    fi
+  else
+    echo "warning: no stock binary under $DOWNLOADS yet; grok-official installed but will fail until official CLI is present" >&2
+  fi
 }
 
 disable_auto_update() {
@@ -119,6 +172,7 @@ auto_update = false
 
 do_rollback() {
   ensure_layout
+  install_official_escape
   local stock
   stock="$(newest_stock_binary)"
   [[ -n "$stock" && -x "$stock" ]] || die "no stock binary found under $DOWNLOADS"
@@ -131,6 +185,8 @@ do_rollback() {
 
 do_install() {
   ensure_layout
+  # Escape hatch first so it exists even if the fork link step aborts later.
+  install_official_escape
 
   if [[ "$SKIP_BUILD" -eq 0 ]]; then
     command -v cargo >/dev/null || die "cargo not found"
@@ -168,7 +224,7 @@ do_install() {
   if ! "$staging" --version >/dev/null 2>&1; then
     local ec=$?
     rm -f "$staging"
-    die "smoke test failed (exit $ec): $staging --version — not linking bin/ (stock unchanged)"
+    die "smoke test failed (exit $ec): $staging --version — not linking bin/grok (stock + grok-official unchanged)"
   fi
 
   mv -f "$staging" "$FORK_PATH"
@@ -181,13 +237,16 @@ do_install() {
   fi
 
   echo
-  "$BIN_DIR/grok" --version
+  echo "fork:    $($BIN_DIR/grok --version 2>/dev/null || echo '?')"
+  echo "official:$($BIN_DIR/grok-official --version 2>/dev/null || echo '?')"
   echo
-  echo "Done. Open a new shell/session so existing grok processes pick this up."
-  echo "Rollback to stock: ./scripts/install-local.sh --rollback"
+  echo "Done. If the fork misbehaves:  grok-official"
+  echo "Full rollback of default grok: ./scripts/install-local.sh --rollback"
 }
 
-if [[ "$ROLLBACK" -eq 1 ]]; then
+if [[ "$ENSURE_OFFICIAL" -eq 1 ]]; then
+  install_official_escape
+elif [[ "$ROLLBACK" -eq 1 ]]; then
   do_rollback
 else
   do_install

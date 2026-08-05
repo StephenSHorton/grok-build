@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# Always run the stock (official) Grok CLI binary under ~/.grok/downloads.
+# Independent of whether ~/.grok/bin/grok is the fork or stock.
+#
+# Install onto PATH (done by install-local.sh):
+#   cp scripts/grok-official ~/.grok/bin/grok-official && chmod +x ...
+#
+# Usage:
+#   grok-official --version
+#   grok-official            # same as official `grok`
+set -euo pipefail
+
+GROK_HOME="${GROK_HOME:-$HOME/.grok}"
+DOWNLOADS="$GROK_HOME/downloads"
+
+resolve_stock() {
+  local candidate=""
+  # Canonical latest stock name (official installer).
+  if [[ -x "$DOWNLOADS/grok-macos-aarch64" ]]; then
+    printf '%s' "$DOWNLOADS/grok-macos-aarch64"
+    return 0
+  fi
+  if [[ -x "$DOWNLOADS/grok-macos-x86_64" ]]; then
+    printf '%s' "$DOWNLOADS/grok-macos-x86_64"
+    return 0
+  fi
+  # Versioned stock: grok-0.2.118-macos-aarch64 — never *fork*.
+  # shellcheck disable=SC2012
+  candidate="$(
+    ls -1t "$DOWNLOADS"/grok-*-macos-* 2>/dev/null \
+      | grep -vE 'fork|staging' \
+      | head -1 \
+      || true
+  )"
+  if [[ -n "$candidate" && -x "$candidate" ]]; then
+    printf '%s' "$candidate"
+    return 0
+  fi
+  # Windows-style names if someone shares GROK_HOME (unlikely).
+  if [[ -x "$DOWNLOADS/grok-windows-amd64.exe" ]]; then
+    printf '%s' "$DOWNLOADS/grok-windows-amd64.exe"
+    return 0
+  fi
+  return 1
+}
+
+stock=""
+if ! stock="$(resolve_stock)"; then
+  echo "grok-official: no stock Grok binary under $DOWNLOADS" >&2
+  echo "  Re-install official CLI from https://x.ai/cli" >&2
+  echo "  or run:  ls -la $DOWNLOADS" >&2
+  exit 127
+fi
+
+if [[ "${GROK_OFFICIAL_PRINT_PATH:-}" == "1" ]]; then
+  printf '%s\n' "$stock"
+  exit 0
+fi
+
+exec "$stock" "$@"
