@@ -9,6 +9,7 @@ It is **not** the official product, and it is **not** a community-maintained alt
 
 Local builds and experiments on top of the public source tree:
 
+- **Transparent canvas by default** — app canvas cleared so the host underlay (e.g. suzuri rain) shows through; selection/hover bands kept so lists stay readable (`GROK_SOLID_BG=1` for stock solid look)
 - Daily-driver install that **replaces** the stock `~/.grok/bin/grok` binary
 - Personal patches on feature branches while keeping `main` easy to sync with upstream
 - Source inspection / debugging against a known monorepo `SOURCE_REV`
