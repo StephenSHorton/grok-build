@@ -9,7 +9,18 @@ Not the official product.
 |-------|--------|
 | **Transparent canvas** | App canvas BGs cleared (`Color::Reset`) so the host underlay (e.g. suzuri rain) shows through. **Selection / hover bands kept** (`bg_visual`, `bg_hover`, `bg_highlight`) so list pickers stay readable. Opt out: `GROK_SOLID_BG=1` |
 | Launch wrappers | `scripts/grok` (macOS/Linux), `scripts/grok.ps1` (Windows) — optional sync/rebuild on start |
-| Install helpers | `scripts/install-local.sh` — copy release binary over stock `~/.grok/bin` |
+| Install helpers | `scripts/install-local.sh` — release build, **adhoc re-sign** after copy, smoke-test, then link `~/.grok/bin` |
+
+### macOS: `zsh: killed     grok`
+
+Local `cargo build --release` binaries are **linker adhoc-signed (4k pages)**. After `cp` into `~/.grok/downloads/`, macOS often kills them at launch with **Code Signature Invalid / Invalid Page** (`SIGKILL`) — crash logs show `CODESIGNING`. Stock downloads are **Developer ID** signed and fine.
+
+`install-local.sh` re-signs with `codesign -s - --force` (proper adhoc, 16k pages), verifies, and runs `--version` **before** retargeting `bin/grok`. If the smoke test fails, stock links are left alone.
+
+```bash
+./scripts/install-local.sh              # safe install
+./scripts/install-local.sh --rollback   # back to newest stock download
+```
 
 - **Upstream remote:** `upstream` → `xai-org/grok-build`
 - **Fork daily-driver branch:** `main` (not a side branch)
