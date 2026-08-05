@@ -9,3 +9,8 @@
 # local Windows build tools (protoc 29.3 win64, etc.)
 .tools/
 
+
+# fork launcher local state
+.fork-built-at
+.fork-launch.lock/
+.fork-upstream-status

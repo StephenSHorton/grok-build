@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
-# Grok Build fork launcher.
+# Grok Build *fork* launcher (transparent canvas + upstream git sync).
+#
+# Daily driver after cutover: `grok` points here.
+# Escape hatch: `grok-official` → stock binary in ~/.grok/downloads/.
 #
 # On every start:
 #   1. git fetch upstream
@@ -7,149 +10,226 @@
 #   3. rebuild release binary only when HEAD changed (or binary missing)
 #   4. exec the fork binary with all args
 #
+# Never changes the caller's working directory — git/cargo run under $REPO
+# via git -C / subshells so Grok opens in the directory you launched from.
+#
 # Skip sync/rebuild:  GROK_SKIP_SYNC=1 grok ...
-# Skip rebuild only:  GROK_SKIP_REBUILD=1 grok ...  (still fetches/reports)
+# Skip rebuild only:  GROK_SKIP_REBUILD=1 grok ...
 # Stock solid bg:     GROK_SOLID_BG=1 grok ...
 
-set -euo pipefail
+set -uo pipefail
+# Note: not `set -e` — prefer launching over dying mid-sync.
 
 REPO="${GROK_FORK_REPO:-$HOME/projects/grok-build}"
 BRANCH="${GROK_FORK_BRANCH:-fork/transparent-bg}"
 UPSTREAM_REMOTE="${GROK_UPSTREAM_REMOTE:-upstream}"
 UPSTREAM_REF="${GROK_UPSTREAM_REF:-main}"
-BIN="$REPO/target/release/xai-grok-pager"
-STAMP="$REPO/.fork-built-at"
-LOCK_DIR="$REPO/.fork-launch.lock"
+BIN="${GROK_FORK_BIN:-$REPO/target/release/xai-grok-pager}"
+STAMP="${GROK_FORK_STAMP:-$REPO/.fork-built-at}"
+LOCK_DIR="${GROK_FORK_LOCK:-$REPO/.fork-launch.lock}"
+STATUS_FILE="${GROK_FORK_STATUS_FILE:-$REPO/.fork-upstream-status}"
+
+# Directory the user launched from — restore before exec so agent CWD is correct.
+START_CWD=$PWD
 
 export PATH="${HOME}/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:${PATH}"
+export GROK_FORK=1
+export GROK_FORK_REPO="$REPO"
+export GROK_FORK_STATUS_FILE="$STATUS_FILE"
+export GROK_UPSTREAM_REMOTE="$UPSTREAM_REMOTE"
+export GROK_UPSTREAM_REF="$UPSTREAM_REF"
 
 log() { printf '[grok-fork] %s\n' "$*" >&2; }
-die() { log "error: $*"; exit 1; }
 
-# Ensure only one sync/rebuild at a time (e.g. two terminals opening grok).
+g() { git -C "$REPO" "$@"; }
+
+clear_status() { rm -f "$STATUS_FILE" 2>/dev/null || true; }
+
+write_status() {
+  local kind="$1" behind="${2:-}" upstream="${3:-}" message="${4:-}"
+  {
+    echo "kind=${kind}"
+    [[ -n "$behind" ]] && echo "behind=${behind}"
+    [[ -n "$upstream" ]] && echo "upstream=${upstream}"
+    [[ -n "$message" ]] && echo "message=${message}"
+  } >"$STATUS_FILE" 2>/dev/null || true
+}
+
+# Short lock wait — never block launch for 10 minutes.
 acquire_lock() {
   local waited=0
   while ! mkdir "$LOCK_DIR" 2>/dev/null; do
-    if [[ $waited -ge 600 ]]; then
-      die "timed out waiting for launch lock ($LOCK_DIR). Remove it if stuck."
+    if [[ $waited -ge 15 ]]; then
+      log "another launch is syncing — skipping sync this time"
+      return 1
     fi
     sleep 1
     waited=$((waited + 1))
   done
   trap 'rmdir "$LOCK_DIR" 2>/dev/null || true' EXIT
+  return 0
+}
+
+release_lock() {
+  rmdir "$LOCK_DIR" 2>/dev/null || true
+  trap - EXIT
 }
 
 need_rebuild() {
   [[ ! -x "$BIN" ]] && return 0
   [[ ! -f "$STAMP" ]] && return 0
   local head built
-  head=$(git -C "$REPO" rev-parse HEAD)
+  head=$(g rev-parse HEAD 2>/dev/null) || return 0
   built=$(cat "$STAMP" 2>/dev/null || true)
   [[ "$head" != "$built" ]]
 }
 
+# Tracked-only dirtiness (never untracked — target/ can be multi-GB).
+tracked_dirty() {
+  [[ -n $(g status --porcelain -uno 2>/dev/null) ]]
+}
+
 sync_upstream() {
-  cd "$REPO" || die "repo not found: $REPO"
-
-  if ! git remote get-url "$UPSTREAM_REMOTE" &>/dev/null; then
-    die "missing remote '$UPSTREAM_REMOTE' (expected xai-org/grok-build)"
-  fi
-
-  local branch
-  branch=$(git rev-parse --abbrev-ref HEAD)
-  if [[ "$branch" != "$BRANCH" ]]; then
-    log "checking out $BRANCH (was on $branch)"
-    git checkout "$BRANCH" || die "could not checkout $BRANCH"
-  fi
-
-  # Dirty tree: stash so rebase can proceed; restore after.
-  local stashed=0
-  if [[ -n $(git status --porcelain) ]]; then
-    log "stashing local uncommitted changes for rebase"
-    git stash push -u -m "grok-fork-launch $(date -u +%Y-%m-%dT%H:%MZ)" >/dev/null
-    stashed=1
-  fi
-
-  log "fetching $UPSTREAM_REMOTE/$UPSTREAM_REF …"
-  if ! git fetch --quiet "$UPSTREAM_REMOTE" "$UPSTREAM_REF"; then
-    log "warning: fetch failed (offline?). continuing with current tree."
-    if [[ $stashed -eq 1 ]]; then
-      git stash pop >/dev/null 2>&1 || log "warning: could not restore stash"
-    fi
+  if [[ ! -d "$REPO/.git" ]]; then
+    log "warning: repo missing ($REPO) — launching without sync"
     return 0
   fi
 
-  local head up base behind
-  head=$(git rev-parse HEAD)
-  up=$(git rev-parse "$UPSTREAM_REMOTE/$UPSTREAM_REF")
-  base=$(git merge-base HEAD "$UPSTREAM_REMOTE/$UPSTREAM_REF")
+  if ! g remote get-url "$UPSTREAM_REMOTE" &>/dev/null; then
+    log "warning: missing remote '$UPSTREAM_REMOTE' — launching without sync"
+    return 0
+  fi
+
+  local branch
+  branch=$(g rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+  if [[ -n "$branch" && "$branch" != "$BRANCH" ]]; then
+    log "checking out $BRANCH (was on $branch)"
+    if ! g checkout "$BRANCH" 2>/dev/null; then
+      log "warning: could not checkout $BRANCH — launching current tree"
+      write_status "checkout_failed" "" "" \
+        "could not checkout $BRANCH — fix git state in fork repo, then relaunch"
+      return 0
+    fi
+  fi
+
+  # Only stash *tracked* changes. Never -u (untracked includes huge trees).
+  local stashed=0
+  if tracked_dirty; then
+    log "stashing tracked local changes for rebase (untracked left alone)"
+    if g stash push -m "grok-fork-launch $(date -u +%Y-%m-%dT%H:%MZ)" >/dev/null 2>&1; then
+      stashed=1
+    else
+      log "warning: stash failed — skipping rebase this launch"
+      write_status "stash_failed" "" "" \
+        "local tracked changes blocked auto-rebase — commit/stash in fork repo or relaunch"
+      return 0
+    fi
+  elif [[ -n $(g status --porcelain 2>/dev/null) ]]; then
+    log "untracked files present (ignored for stash/rebase)"
+  fi
+
+  log "fetching $UPSTREAM_REMOTE/$UPSTREAM_REF …"
+  if ! g fetch --quiet -- "$UPSTREAM_REMOTE" "$UPSTREAM_REF" 2>/dev/null; then
+    log "warning: fetch failed (offline?) — launching current build"
+    [[ $stashed -eq 1 ]] && g stash pop >/dev/null 2>&1 || true
+    return 0
+  fi
+
+  local head up base behind up_short
+  head=$(g rev-parse HEAD 2>/dev/null) || return 0
+  up=$(g rev-parse "$UPSTREAM_REMOTE/$UPSTREAM_REF" 2>/dev/null) || return 0
+  base=$(g merge-base HEAD "$UPSTREAM_REMOTE/$UPSTREAM_REF" 2>/dev/null) || return 0
+  up_short=$(g rev-parse --short "$UPSTREAM_REMOTE/$UPSTREAM_REF" 2>/dev/null || echo "")
 
   if [[ "$base" != "$up" ]]; then
-    behind=$(git rev-list --count HEAD.."$UPSTREAM_REMOTE/$UPSTREAM_REF" 2>/dev/null || echo "?")
+    behind=$(g rev-list --count HEAD.."$UPSTREAM_REMOTE/$UPSTREAM_REF" 2>/dev/null || echo "0")
     log "upstream is $behind commit(s) ahead — rebasing $BRANCH onto $UPSTREAM_REMOTE/$UPSTREAM_REF"
-    if ! git rebase "$UPSTREAM_REMOTE/$UPSTREAM_REF"; then
-      log "rebase hit conflicts. Resolve in $REPO, then:"
-      log "  git rebase --continue"
-      log "  cargo build -p xai-grok-pager-bin --release"
-      log "  git rev-parse HEAD > $STAMP"
-      if [[ $stashed -eq 1 ]]; then
-        log "(your stash is still in 'git stash list')"
-      fi
-      exit 1
+    if ! g rebase "$UPSTREAM_REMOTE/$UPSTREAM_REF" 2>/dev/null; then
+      log "rebase hit conflicts — aborting and starting Grok with a notice"
+      g rebase --abort 2>/dev/null || true
+      write_status "rebase_conflict" "$behind" "$up_short" \
+        "upstream update could not be rebased automatically (+${behind}) — fix in the fork repo, then relaunch"
+      [[ $stashed -eq 1 ]] && g stash pop >/dev/null 2>&1 || true
+      return 0
     fi
-    log "rebase complete ($(git rev-parse --short HEAD))"
+    log "rebase complete ($(g rev-parse --short HEAD 2>/dev/null || echo '?'))"
+    clear_status
   else
-    log "already up to date with $UPSTREAM_REMOTE/$UPSTREAM_REF ($(git rev-parse --short HEAD))"
+    log "already up to date with $UPSTREAM_REMOTE/$UPSTREAM_REF ($(g rev-parse --short HEAD 2>/dev/null || echo '?'))"
+    clear_status
   fi
 
   if [[ $stashed -eq 1 ]]; then
-    if git stash pop >/dev/null 2>&1; then
+    if g stash pop >/dev/null 2>&1; then
       log "restored stashed changes"
     else
-      log "warning: stash pop had conflicts — check 'git stash list' / status"
+      log "warning: stash pop had conflicts — check git status in $REPO"
     fi
   fi
 }
 
 rebuild_if_needed() {
-  cd "$REPO" || die "repo not found: $REPO"
   if ! need_rebuild; then
     log "binary current"
     return 0
   fi
+  if [[ ! -x "$BIN" ]] && ! command -v cargo >/dev/null 2>&1; then
+    log "error: no binary and no cargo — cannot build"
+    return 1
+  fi
   if ! command -v cargo >/dev/null 2>&1; then
-    die "cargo not on PATH; install Rust or set PATH to include ~/.cargo/bin"
+    log "warning: cargo missing; using existing binary"
+    return 0
   fi
   if ! command -v dotslash >/dev/null 2>&1; then
     log "warning: dotslash not found; build may need protoc on PATH"
   fi
   log "building release binary (this can take a few minutes) …"
-  cargo build -p xai-grok-pager-bin --release
-  git rev-parse HEAD >"$STAMP"
-  log "build ok → $BIN"
+  if (
+    cd "$REPO" || exit 1
+    cargo build -p xai-grok-pager-bin --release
+  ); then
+    g rev-parse HEAD >"$STAMP" 2>/dev/null || true
+    log "build ok → $BIN"
+    return 0
+  fi
+  log "warning: build failed — will try existing binary if any"
+  return 1
+}
+
+launch() {
+  if [[ ! -x "$BIN" ]]; then
+    log "error: no fork binary at $BIN"
+    log "  build: cd $REPO && cargo build -p xai-grok-pager-bin --release"
+    log "  or use: grok-official"
+    exit 1
+  fi
+  cd "$START_CWD" 2>/dev/null || true
+  exec "$BIN" "$@"
 }
 
 main() {
-  [[ -d "$REPO/.git" ]] || die "not a git repo: $REPO"
-  [[ -x "$BIN" || "${GROK_SKIP_REBUILD:-}" != "1" ]] || die "binary missing: $BIN"
-
-  if [[ "${GROK_SKIP_SYNC:-}" != "1" ]]; then
-    acquire_lock
-    sync_upstream
-    if [[ "${GROK_SKIP_REBUILD:-}" != "1" ]]; then
-      rebuild_if_needed
-    fi
-    rmdir "$LOCK_DIR" 2>/dev/null || true
-    trap - EXIT
-  elif [[ "${GROK_SKIP_REBUILD:-}" != "1" ]]; then
-    acquire_lock
-    rebuild_if_needed
-    rmdir "$LOCK_DIR" 2>/dev/null || true
-    trap - EXIT
+  if [[ ! -d "$REPO/.git" ]]; then
+    log "warning: not a git repo at $REPO — launching binary only"
+    launch "$@"
   fi
 
-  [[ -x "$BIN" ]] || die "binary not found after build: $BIN"
-  exec "$BIN" "$@"
+  if [[ "${GROK_SKIP_SYNC:-}" != "1" ]]; then
+    if acquire_lock; then
+      sync_upstream || log "warning: sync had errors — continuing"
+      if [[ "${GROK_SKIP_REBUILD:-}" != "1" ]]; then
+        rebuild_if_needed || true
+      fi
+      release_lock
+    fi
+  elif [[ "${GROK_SKIP_REBUILD:-}" != "1" ]]; then
+    if acquire_lock; then
+      rebuild_if_needed || true
+      release_lock
+    fi
+  fi
+
+  launch "$@"
 }
 
 main "$@"
