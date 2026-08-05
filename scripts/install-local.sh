@@ -143,9 +143,36 @@ do_install() {
 
   [[ -x "$BINARY" ]] || die "missing binary: $BINARY (build first or omit --skip-build)"
 
-  cp -f "$BINARY" "$FORK_PATH"
-  chmod +x "$FORK_PATH"
-  echo "installed $FORK_PATH"
+  # Copy to a temp name first, re-sign, smoke-test — only then replace the
+  # live fork path and retarget symlinks. Never leave bin/ pointing at a
+  # binary that immediately SIGKILLs (codesign invalid page).
+  local staging="$FORK_PATH.staging"
+  cp -f "$BINARY" "$staging"
+  chmod +x "$staging"
+  # cargo's linker-signed adhoc blob uses 4k pages and is often rejected at
+  # runtime under modern macOS ("zsh: killed", CODESIGNING Invalid Page) once
+  # the file is copied out of target/. Re-sign with codesign (16k pages).
+  if command -v codesign >/dev/null; then
+    codesign -s - --force --timestamp=none "$staging" \
+      || die "codesign adhoc re-sign failed for $staging"
+    codesign --verify --verbose=2 "$staging" 2>&1 \
+      || die "codesign verify failed for $staging"
+  else
+    echo "warning: codesign not found; binary may be killed by macOS (Invalid Page)" >&2
+  fi
+  # Drop quarantine / provenance that can confuse Gatekeeper on copied builds.
+  if command -v xattr >/dev/null; then
+    xattr -cr "$staging" 2>/dev/null || true
+  fi
+
+  if ! "$staging" --version >/dev/null 2>&1; then
+    local ec=$?
+    rm -f "$staging"
+    die "smoke test failed (exit $ec): $staging --version — not linking bin/ (stock unchanged)"
+  fi
+
+  mv -f "$staging" "$FORK_PATH"
+  echo "installed $FORK_PATH (adhoc re-signed)"
 
   link_bin "../downloads/$FORK_NAME"
 
@@ -157,6 +184,7 @@ do_install() {
   "$BIN_DIR/grok" --version
   echo
   echo "Done. Open a new shell/session so existing grok processes pick this up."
+  echo "Rollback to stock: ./scripts/install-local.sh --rollback"
 }
 
 if [[ "$ROLLBACK" -eq 1 ]]; then
