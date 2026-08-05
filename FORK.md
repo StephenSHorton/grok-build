@@ -45,10 +45,27 @@ Stock CLI lives under `~/.grok/`:
 
 | Path | Role |
 |------|------|
-| `~/.grok/bin/grok` | symlink used by `PATH` (this machine’s installer puts `~/.grok/bin` first) |
+| `~/.grok/bin/grok` | daily driver (fork after install-local; stock after rollback) |
 | `~/.grok/bin/agent` | same binary, agent entrypoint |
-| `~/.grok/downloads/` | versioned binaries |
+| **`~/.grok/bin/grok-official`** | **always stock** — escape hatch if the fork is broken |
+| `~/.grok/bin/agent-official` | same as `grok-official` |
+| `~/.grok/downloads/` | versioned stock + `grok-fork-macos-aarch64` |
 | `~/.grok/config.toml` | settings (`auto_update`, …) |
+
+### Escape hatch: `grok-official`
+
+Fork install never replaces this. It always execs the newest stock download
+under `~/.grok/downloads/` (Developer ID signed).
+
+```bash
+grok-official --version    # stock
+grok --version             # fork (if installed as daily driver)
+
+# Only refresh the escape hatch (no build):
+./scripts/install-local.sh --ensure-official
+```
+
+Also copied to `~/.local/bin/grok-official` when that directory exists.
 
 ### Recommended: build + install into `~/.grok`
 
@@ -56,6 +73,7 @@ Stock CLI lives under `~/.grok/`:
 ./scripts/install-local.sh              # release build + install + auto_update=false
 ./scripts/install-local.sh --skip-build # install existing target/release/xai-grok-pager
 ./scripts/install-local.sh --rollback   # newest stock download under downloads/
+./scripts/install-local.sh --ensure-official  # stock escape hatch only
 ```
 
 ### Alternative: wrapper launcher (sync + rebuild + run)
