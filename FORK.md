@@ -3,208 +3,152 @@
 Personal fork of [xai-org/grok-build](https://github.com/xai-org/grok-build).
 Not the official product.
 
-## Critical invariant (read this)
+**New machine?** Use the README install section (or `./scripts/setup-daily-driver.sh`). This file is the longer operational reference.
+
+## Critical invariant
 
 **`~/.grok/bin/grok` must be the launch wrapper (`scripts/grok`), never a frozen binary.**
 
-Every time you open `grok`, the wrapper:
-
-1. Fetches **`origin`** (your GitHub fork: new commits from other machines / merges)
-2. Fetches **`upstream`** (`xai-org/grok-build`: official monorepo syncs)
-3. Fast-forwards onto origin when possible; rebases onto upstream when possible
-4. Rebuilds the release binary **at most once** if `HEAD` moved (or the binary is missing)
-5. Execs `target/release/xai-grok-pager`
-
-If `bin/grok` points at `~/.grok/downloads/grok-fork-*` instead, **auto-update is dead** and you will silently rot on an old build. That is what went wrong on 2026-08-05 after the codesign install path.
+| Correct | Wrong |
+|---------|--------|
+| `readlink ~/.grok/bin/grok` → `…/scripts/grok` | → `…/downloads/grok-fork-*` |
+| Each open: fetch origin + upstream, ≤1 rebuild | Static binary; remotes never applied |
 
 | Command | Role |
 |---------|------|
-| `grok` / `agent` | Fork launcher (git sync + single rebuild + run) |
-| `grok-official` / `agent-official` | Always stock — escape hatch if the fork is broken |
+| `grok` / `agent` | Launcher: sync remotes → rebuild if needed → run |
+| `grok-official` / `agent-official` | Always stock |
+
+Repair:
 
 ```bash
-# Correct daily driver (what install-local does by default):
-readlink ~/.grok/bin/grok
-# → …/projects/grok-build/scripts/grok
-
-# Wrong (frozen; no git sync):
-# → ../downloads/grok-fork-macos-aarch64
+./scripts/install-local.sh --skip-build    # re-link launcher
+# or
+./scripts/setup-daily-driver.sh            # full setup + hard verify
 ```
 
-Repair if unwired:
+## What every open does
+
+One pass, one rebuild maximum:
+
+1. `git fetch origin` (this GitHub fork)
+2. `git fetch upstream` (`xai-org/grok-build`)
+3. Fast-forward onto origin when behind (no auto-push; no auto-merge if diverged)
+4. Rebase onto `upstream/main` when upstream moved
+5. `cargo build -p xai-grok-pager-bin --release` only if `HEAD` ≠ last build stamp (or binary missing)
+6. `exec` `target/release/xai-grok-pager`
+
+Soft failures (diverged origin, rebase conflicts) write `.fork-upstream-status` in the repo and still launch the last good binary.
+
+## New machine (detail)
+
+Same outcome as README. Preferred entry:
 
 ```bash
+git clone git@github.com:StephenSHorton/grok-build.git ~/projects/grok-build
 cd ~/projects/grok-build
-./scripts/install-local.sh --skip-build   # re-link launcher only
-# or full seed build + link:
-./scripts/install-local.sh
+./scripts/setup-daily-driver.sh
 ```
+
+Manual equivalent:
+
+```bash
+git remote add upstream https://github.com/xai-org/grok-build.git   # once
+cargo install dotslash                                              # once
+./scripts/install-local.sh                                          # never --static-binary
+readlink ~/.grok/bin/grok   # must end in /scripts/grok
+grok --version              # [grok-fork] lines on stderr
+```
+
+Clone path can be anything: the launcher resolves its repo from the real path of `scripts/grok` (symlink-safe).
+
+### Prerequisites
+
+- Stock Grok already installed ([x.ai/cli](https://x.ai/cli)) so `~/.grok/` exists and stock binaries can back `grok-official`
+- [rustup](https://rustup.rs) / `cargo` (toolchain pinned by `rust-toolchain.toml`)
+- Network for first `cargo build --release` (several minutes)
 
 ## Patches on `main`
 
 | Patch | Notes |
 |-------|--------|
-| **Transparent canvas** | App canvas BGs cleared (`Color::Reset`) so the host underlay (e.g. suzuri rain) shows through. **Selection / hover bands kept** (`bg_visual`, `bg_hover`, `bg_highlight`) so list pickers stay readable. Opt out: `GROK_SOLID_BG=1` |
-| Launch wrapper | `scripts/grok` — **required** daily driver; origin + upstream sync; one rebuild max |
-| Install helpers | `scripts/install-local.sh` — wires launcher + `grok-official`; optional seed build |
+| **Transparent canvas** | Canvas BGs cleared (`Color::Reset`) for host underlay; **selection/hover bands kept**. Opt out: `GROK_SOLID_BG=1` |
+| Launch wrapper | `scripts/grok` — required daily driver |
+| Install | `setup-daily-driver.sh` / `install-local.sh` — launcher + `grok-official` |
 
 ### macOS: `zsh: killed     grok`
 
-Local `cargo build --release` binaries are **linker adhoc-signed (4k pages)**. After `cp` into `~/.grok/downloads/`, macOS often kills them at launch with **Code Signature Invalid / Invalid Page** (`SIGKILL`).
-
-The **launcher runs the binary from `target/release/`** (no copy), which avoids that class of failure. Prefer the launcher path. Only use `./scripts/install-local.sh --static-binary` if you knowingly want a frozen, re-signed download (and accept no auto-sync).
+Copying a cargo release binary into `~/.grok/downloads/` without re-signing often dies with **Code Signature Invalid**. The **launcher runs from `target/release/`** (no copy) and avoids that. Do not use `--static-binary` unless you accept frozen builds + manual codesign.
 
 ## Remotes
 
-```bash
-git remote add upstream https://github.com/xai-org/grok-build.git   # once
-# origin  → your fork (e.g. StephenSHorton/grok-build)
-# upstream → xai-org/grok-build
-```
+| Remote | URL | On open |
+|--------|-----|---------|
+| `origin` | your fork (`StephenSHorton/grok-build`) | fetch + FF if behind |
+| `upstream` | `https://github.com/xai-org/grok-build.git` | fetch + rebase if ahead |
 
-| Remote | On every `grok` open |
-|--------|----------------------|
-| `origin` | `git fetch` + **fast-forward** if you are behind (no auto-push; no auto-merge if diverged) |
-| `upstream` | `git fetch` + **rebase** onto `upstream/main` if upstream moved |
+Keep personal patches on `main`. `SOURCE_REV` is the monorepo SHA for this tree.
 
-Both fetches happen in one launch pass; **cargo runs at most once** after all git work.
-
-Keep personal patches on `main` (or merge feature branches into `main` before relying on the launcher).
-`SOURCE_REV` is the monorepo commit SHA for this tree.
-
-### How to tell you are current
+### Am I current?
 
 ```bash
-cd ~/projects/grok-build
 git fetch origin && git fetch upstream
-git status -sb
-git rev-list --count HEAD..origin/main      # 0 = not behind your fork remote
-git rev-list --count HEAD..upstream/main   # 0 = fully rebased onto xAI
-# Opening grok should log e.g.:
-#   [grok-fork] fetching origin + upstream …
-#   [grok-fork] already up to date with …
-#   [grok-fork] binary current (…)
+git rev-list --count HEAD..origin/main     # 0 = not behind fork remote
+git rev-list --count HEAD..upstream/main   # 0 = contains latest upstream
 ```
 
-Soft failures (diverged origin, rebase conflicts) write `~/projects/grok-build/.fork-upstream-status` and still launch the last good binary.
+Or just open `grok` and read the `[grok-fork]` lines on stderr.
 
-## New machine (stock Grok already installed)
-
-Copy-paste setup. Assumes macOS/Linux, stock CLI already on `PATH`, and you can
-build Rust release binaries.
+## Install commands
 
 ```bash
-# 1) Clone YOUR fork (not xai-org), any path is fine
-mkdir -p ~/projects
-git clone git@github.com:StephenSHorton/grok-build.git ~/projects/grok-build
-cd ~/projects/grok-build
-git checkout main
-
-# 2) Remotes: origin=fork (set by clone), add upstream once
-git remote add upstream https://github.com/xai-org/grok-build.git   # ignore error if exists
-git fetch upstream
-
-# 3) Build deps (once per machine)
-#    - Rust: https://rustup.rs  (rust-toolchain.toml pins the channel)
-#    - DotSlash for hermetic bin/protoc:
-cargo install dotslash
-
-# 4) Wire daily driver = launcher (NOT a frozen binary)
-./scripts/install-local.sh
-# first run seeds a release build (can take several minutes), then:
-#   ~/.grok/bin/grok  →  …/scripts/grok
-#   ~/.grok/bin/grok-official → stock escape hatch
-#   auto_update = false
-
-# 5) Must-pass sanity checks
-readlink ~/.grok/bin/grok
-# → absolute path ending in /scripts/grok   (FAIL if downloads/grok-fork-*)
-grok --version
-# stderr should include: [grok-fork] fetching origin + upstream …
+./scripts/setup-daily-driver.sh              # new machine: remotes + deps + install + verify
+./scripts/install-local.sh                   # seed build + wire launcher + auto_update=false
+./scripts/install-local.sh --skip-build      # re-wire launcher only
+./scripts/install-local.sh --rollback        # stock download as bin/grok
+./scripts/install-local.sh --ensure-official # stock escape hatch only
+./scripts/install-local.sh --static-binary   # NOT for daily driver (disables sync)
 ```
 
-**Tell an agent on the other machine:** read `FORK.md` “New machine” + “Critical invariant”;
-run those steps; **never** pass `--static-binary`; abort if `readlink` is not `scripts/grok`.
-
-If the clone is not under `~/projects/grok-build`, that is fine: `install-local.sh`
-symlinks the launcher from whatever checkout you ran it in, and the launcher
-defaults `GROK_FORK_REPO` to its own repo root.
-
-## Daily driver install
-
-Stock CLI lives under `~/.grok/`:
+Layout under `~/.grok/`:
 
 | Path | Role |
 |------|------|
-| `~/.grok/bin/grok` | **must be** `scripts/grok` (launcher) |
-| `~/.grok/bin/agent` | same launcher |
-| **`~/.grok/bin/grok-official`** | **always stock** escape hatch |
-| `~/.grok/bin/agent-official` | same as `grok-official` |
-| `~/.grok/downloads/` | stock binaries (+ optional frozen fork if you use `--static-binary`) |
-| `~/.grok/config.toml` | `auto_update = false` so stock channel does not overwrite the fork |
+| `bin/grok`, `bin/agent` | → `scripts/grok` |
+| `bin/grok-official` | stock |
+| `downloads/` | stock binaries |
+| `config.toml` | `auto_update = false` |
 
-### Install / repair
-
-```bash
-./scripts/install-local.sh              # seed build + wire launcher + auto_update=false
-./scripts/install-local.sh --skip-build # re-wire launcher only (no cargo)
-./scripts/install-local.sh --rollback   # stock download as bin/grok
-./scripts/install-local.sh --ensure-official  # stock escape hatch only
-# Avoid unless you know you want no auto-sync:
-./scripts/install-local.sh --static-binary
-```
-
-### Escape hatch: `grok-official`
-
-```bash
-grok-official --version    # stock
-grok --version             # fork launcher → fork binary
-```
-
-### Env skips (launcher)
+### Env (launcher)
 
 | Var | Effect |
 |-----|--------|
-| `GROK_SKIP_SYNC=1` | don’t fetch/ff/rebase |
-| `GROK_SKIP_REBUILD=1` | don’t cargo build |
-| `GROK_SOLID_BG=1` | stock solid backgrounds |
-| `GROK_FORK_REPO` | override checkout path (default: parent of `scripts/grok`) |
+| `GROK_SKIP_SYNC=1` | skip fetch/ff/rebase |
+| `GROK_SKIP_REBUILD=1` | skip cargo |
+| `GROK_SOLID_BG=1` | solid stock backgrounds |
+| `GROK_FORK_REPO` | override repo (default: parent of real `scripts/grok`) |
 | `GROK_FORK_BRANCH` | branch to keep checked out (default `main`) |
 
-### Manual build (normally unnecessary)
+## Why this almost got lost (2026-08-05)
 
-```bash
-cargo install dotslash   # once; bin/protoc
-cargo build -p xai-grok-pager-bin --release
-# → target/release/xai-grok-pager  (what the launcher execs)
-```
+1. Intended: `scripts/grok` as system `grok` (launch-time sync).
+2. `install-local.sh` briefly installed a **frozen** re-signed binary under `downloads/` and pointed `bin/grok` at it (codesign workaround).
+3. That silently killed auto-update.
 
-## What went wrong (2026-08-05) — do not repeat
-
-Two install stories lived side by side:
-
-1. **Intended:** `scripts/grok` as system `grok` (launch-time upstream sync).
-2. **`install-local.sh`:** copy a release binary into `~/.grok/downloads/` and point `bin/grok` at it (needed briefly for adhoc codesign after `cp`).
-
-Running (2) after (1) **silently replaced the launcher** with a static binary. Auto-update stopped; nobody noticed until remotes moved.
-
-**Policy now:** default `install-local.sh` only wires the launcher. Static binary install is opt-in (`--static-binary`) and prints a warning. Docs call out the `readlink` check above.
+**Policy now:** default install only wires the launcher; setup script hard-fails if the link is wrong; `--static-binary` is opt-in and warned.
 
 ## Windows
 
-Stock install: `%USERPROFILE%\.grok\bin\`. Prefer the PowerShell launcher `scripts/grok.ps1` for the same origin+upstream+single-rebuild behavior (keep it in sync with `scripts/grok` when changing sync policy).
-
-**Do not run stock `grok update`** — it overwrites the fork entrypoint. Keep `auto_update = false`.
+Prefer `scripts/grok.ps1` (same origin + upstream + single-rebuild policy). Keep it aligned when changing sync rules. Do not run stock `grok update` over the fork; keep `auto_update = false`.
 
 ## Docs in this tree
 
 | Doc | Status |
 |-----|--------|
-| This file (`FORK.md`) | Fork-specific; safe to edit |
-| Root `README.md` | Fork banner + pointers |
-| `crates/.../docs/user-guide/` | Upstream product docs — avoid fork-only edits (monorepo sync) |
+| [README.md](README.md) | New-machine install + success checks |
+| This file | Operations / invariant / history |
+| `crates/.../docs/user-guide/` | Upstream — avoid fork-only edits |
 
 ## License
 
-Same as upstream: Apache License 2.0 for first-party code. See `LICENSE` and
-`THIRD-PARTY-NOTICES`.
+Apache-2.0 first-party. See `LICENSE` and `THIRD-PARTY-NOTICES`.
