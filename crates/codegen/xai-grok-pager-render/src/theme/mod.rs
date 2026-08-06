@@ -29,10 +29,15 @@ pub use tokyonight::{Theme, pulse_brightness, wave_brightness};
 /// Whether themed (non-minimal) rendering should leave canvas backgrounds
 /// transparent (`Color::Reset`) so the terminal's own background shows.
 ///
-/// Selection / hover bands (`bg_visual`, `bg_hover`, `bg_highlight`) stay
-/// painted — only the app canvas is cleared. Default **on** in this local
-/// fork. Set `GROK_SOLID_BG=1` (or `true`/`yes`) to restore stock solid
-/// theme backgrounds.
+/// The **app canvas** (`bg_base`, `bg_terminal`, scrollbar track) is cleared.
+/// Structural dim bands stay painted so content remains scannable over a
+/// host underlay (e.g. suzuri rain):
+/// - list selection / hover (`bg_visual`, `bg_hover`, `bg_highlight`)
+/// - user-prompt + elevated surfaces (`bg_light`, `bg_dark`)
+/// - code / paste panels (`md_code_bg`, `paste_bg`)
+///
+/// Default **on** in this local fork. Set `GROK_SOLID_BG=1` (or `true`/`yes`)
+/// to restore stock solid theme backgrounds.
 #[must_use]
 pub fn transparent_canvas_enabled() -> bool {
     match std::env::var("GROK_SOLID_BG") {
@@ -335,28 +340,28 @@ impl Theme {
         }
     }
 
-    /// Clear solid canvas backgrounds so the terminal's own background
+    /// Clear solid **canvas** backgrounds so the terminal's own background
     /// (including transparency / wallpaper / host ambient) shows through.
     ///
-    /// Accents, text, and **list selection bands** are left intact:
-    /// `bg_visual` (picker /resume cursor), `bg_hover`, and `bg_highlight`
-    /// (list-pane selection). Zeroing those made selected rows invisible
-    /// under hosts that skip painting default/Reset cell backgrounds
-    /// (e.g. suzuri rain). Diff insert/delete bands still go transparent
-    /// (whole-line fg mode via [`Self::diff_uses_line_fg`]).
+    /// Dim structural bands are kept so turns and chrome stay scannable:
+    /// - list selection / hover: `bg_visual`, `bg_hover`, `bg_highlight`
+    /// - user-prompt rows + elevated fills: `bg_light`, `bg_dark`
+    ///   (`UserPromptBlock` band follows `bg_light`; zeroing it made
+    ///   prompt blocks invisible over a transparent canvas)
+    /// - code / paste panels: `md_code_bg`, `paste_bg`
+    ///
+    /// Diff insert/delete bands still go transparent (whole-line fg mode
+    /// via [`Self::diff_uses_line_fg`]).
     #[must_use]
     pub fn with_transparent_canvas(mut self) -> Self {
         use ratatui::style::Color;
         self.bg_base = Color::Reset;
-        self.bg_light = Color::Reset;
-        self.bg_dark = Color::Reset;
-        // Keep selection / hover bands — they are the primary list-cursor
-        // signal (full-width bg + optional bold), not optional chrome.
-        // self.bg_highlight / bg_hover / bg_visual intentionally unchanged.
+        // Keep elevated / selection surfaces as dim highlights over the
+        // host underlay (prompt bands, code blocks, list selection).
+        // self.bg_light / bg_dark / bg_highlight / bg_hover / bg_visual
+        // / md_code_bg / paste_bg intentionally unchanged.
         self.bg_terminal = Color::Reset;
         self.scrollbar_bg = Color::Reset;
-        self.md_code_bg = Color::Reset;
-        self.paste_bg = Color::Reset;
         // Diff bands: Reset triggers whole-line fg mode via diff_uses_line_fg().
         self.diff_delete_bg = Color::Reset;
         self.diff_insert_bg = Color::Reset;
@@ -788,10 +793,8 @@ mod tests {
         assert!(!matches!(solid.bg_base, Color::Reset));
         let t = solid.with_transparent_canvas();
         assert_eq!(t.bg_base, Color::Reset);
-        assert_eq!(t.bg_light, Color::Reset);
-        assert_eq!(t.bg_dark, Color::Reset);
         assert_eq!(t.bg_terminal, Color::Reset);
-        assert_eq!(t.md_code_bg, Color::Reset);
+        assert_eq!(t.scrollbar_bg, Color::Reset);
         assert_eq!(t.diff_delete_bg, Color::Reset);
         assert_eq!(t.diff_insert_bg, Color::Reset);
         // Accents kept so themed chrome still has color.
@@ -801,23 +804,28 @@ mod tests {
     }
 
     #[test]
-    fn with_transparent_canvas_keeps_selection_bands() {
-        // List / picker selection is a painted bg_visual (or bg_highlight)
-        // row — not reverse video. Transparent canvas must not zero those
-        // tokens or selected rows vanish under hosts that skip default BG.
+    fn with_transparent_canvas_keeps_selection_and_elevated_bands() {
+        // List selection, user-prompt bands (bg_light), and code/paste panels
+        // must stay painted over a transparent host canvas.
         use ratatui::style::Color;
         let solid = Theme::groknight();
         let t = solid.with_transparent_canvas();
         assert_eq!(t.bg_visual, solid.bg_visual);
         assert_eq!(t.bg_hover, solid.bg_hover);
         assert_eq!(t.bg_highlight, solid.bg_highlight);
+        assert_eq!(t.bg_light, solid.bg_light);
+        assert_eq!(t.bg_dark, solid.bg_dark);
+        assert_eq!(t.md_code_bg, solid.md_code_bg);
+        assert_eq!(t.paste_bg, solid.paste_bg);
         assert!(!matches!(t.bg_visual, Color::Reset));
-        assert!(!matches!(t.bg_hover, Color::Reset));
-        assert!(!matches!(t.bg_highlight, Color::Reset));
+        assert!(!matches!(t.bg_light, Color::Reset));
+        assert!(!matches!(t.md_code_bg, Color::Reset));
 
         let tokyo = Theme::tokyonight().with_transparent_canvas();
         assert_eq!(tokyo.bg_visual, Theme::tokyonight().bg_visual);
+        assert_eq!(tokyo.bg_light, Theme::tokyonight().bg_light);
         assert!(!matches!(tokyo.bg_visual, Color::Reset));
+        assert!(!matches!(tokyo.bg_light, Color::Reset));
     }
 
     #[test]

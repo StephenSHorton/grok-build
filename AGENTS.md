@@ -149,7 +149,7 @@ Prerequisites on each machine: stock Grok + rustup + this clone. That is the pro
 
 | Patch | Notes |
 |-------|--------|
-| Transparent canvas | Default clear canvas for host underlay; keep selection/hover bands. `GROK_SOLID_BG=1` for solid. |
+| Transparent canvas | Default clear canvas for host underlay; keep selection/hover + dim elevated bands (prompt, code, paste). `GROK_SOLID_BG=1` for solid. |
 
 ---
 
