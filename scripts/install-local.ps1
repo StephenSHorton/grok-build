@@ -68,7 +68,7 @@ function Write-CmdShim {
     )
     $content = @"
 @echo off
-REM Managed by install-local.ps1 — fork launcher (do not replace with a frozen .exe)
+REM Managed by install-local.ps1 - fork launcher (do not replace with a frozen .exe)
 powershell -NoProfile -ExecutionPolicy Bypass -File "$TargetPs1" %*
 "@
     Set-Content -LiteralPath $CmdPath -Value $content -Encoding ASCII
@@ -90,7 +90,7 @@ exit /b 127
     }
     $content = @"
 @echo off
-REM Always stock — escape hatch when fork launcher is broken
+REM Always stock - escape hatch when fork launcher is broken
 "$StockExe" %*
 "@
     Set-Content -LiteralPath $cmdPath -Value $content -Encoding ASCII
@@ -141,9 +141,9 @@ function Install-OfficialEscape {
 
 function Seed-Build {
     if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
-        Die 'cargo not found — install Rust from https://rustup.rs'
+        Die 'cargo not found - install Rust from https://rustup.rs'
     }
-    Write-Info "seeding release build ($Package)…"
+    Write-Info "seeding release build ($Package)..."
     Push-Location $RepoRoot
     try {
         & cargo build -p $Package --release
@@ -161,7 +161,7 @@ function Install-Launcher {
     Ensure-Layout
     if (-not (Test-Path $LauncherPs1)) { Die "missing $LauncherPs1" }
 
-    # PATHEXT prefers .EXE over .CMD — move stock grok.exe out of the way.
+    # PATHEXT prefers .EXE over .CMD - move stock grok.exe out of the way.
     $binExe = Join-Path $BinDir 'grok.exe'
     $agentExe = Join-Path $BinDir 'agent.exe'
     $stockBackup = Join-Path $BinDir 'grok.stock.exe'
@@ -196,7 +196,7 @@ function Verify-Launcher {
         Die "grok.cmd does not invoke scripts\grok.ps1"
     }
     if (Test-Path (Join-Path $BinDir 'grok.exe')) {
-        Die "grok.exe still present in bin/ — it would shadow grok.cmd (PATHEXT). Re-run install."
+        Die "grok.exe still present in bin/ - it would shadow grok.cmd (PATHEXT). Re-run install."
     }
     Write-Info "verified: daily driver is grok.cmd -> grok.ps1"
 }
