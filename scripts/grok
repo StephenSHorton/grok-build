@@ -24,7 +24,11 @@
 set -uo pipefail
 # Note: not `set -e` — prefer launching over dying mid-sync.
 
-REPO="${GROK_FORK_REPO:-$HOME/projects/grok-build}"
+# Default repo = parent of this script (works no matter where the clone lives).
+# Override with GROK_FORK_REPO only when the launcher is copied out of the tree.
+_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+_DEFAULT_REPO="$(cd "$_SCRIPT_DIR/.." && pwd)"
+REPO="${GROK_FORK_REPO:-$_DEFAULT_REPO}"
 BRANCH="${GROK_FORK_BRANCH:-main}"
 ORIGIN_REMOTE="${GROK_ORIGIN_REMOTE:-origin}"
 ORIGIN_REF="${GROK_ORIGIN_REF:-$BRANCH}"

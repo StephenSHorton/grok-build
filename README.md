@@ -28,28 +28,29 @@ External PRs are not accepted on the public tree (see [CONTRIBUTING.md](CONTRIBU
 
 ## Daily driver (replace stock)
 
-Full notes: **[FORK.md](FORK.md)** (includes the “must be the launcher” invariant).
+Full notes: **[FORK.md](FORK.md)** — start with **New machine** + **Critical invariant**.
+
+### New machine (stock Grok already installed)
 
 ```bash
-# once: remotes + deps
-git remote add upstream https://github.com/xai-org/grok-build.git   # if missing
-cargo install dotslash                                              # if missing
+git clone git@github.com:StephenSHorton/grok-build.git ~/projects/grok-build
+cd ~/projects/grok-build
+git remote add upstream https://github.com/xai-org/grok-build.git   # once
+cargo install dotslash                                              # once (needs rustup)
+./scripts/install-local.sh                                          # seed build + wire launcher
 
-# seed build + wire launcher as ~/.grok/bin/{grok,agent}, auto_update=false
-./scripts/install-local.sh
-
-# sanity: must resolve to scripts/grok, not downloads/grok-fork-*
-readlink ~/.grok/bin/grok
-grok --version   # logs [grok-fork] fetch/sync lines on stderr
+readlink ~/.grok/bin/grok   # MUST end in /scripts/grok  (not downloads/grok-fork-*)
+grok --version              # should log [grok-fork] fetching origin + upstream …
 ```
 
-Rollback to the newest stock download under `~/.grok/downloads/`:
+Do **not** use `--static-binary` (that freezes a binary and kills auto-update).
+
+Rollback / escape hatch:
 
 ```bash
-./scripts/install-local.sh --rollback
+./scripts/install-local.sh --rollback   # stock as default grok
+grok-official                           # stock without changing default
 ```
-
-If the fork is broken but you need stock immediately: `grok-official`.
 
 ---
 
