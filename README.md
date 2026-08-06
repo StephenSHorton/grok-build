@@ -1,115 +1,140 @@
-# Grok Build (personal fork)
+<div align="center">
 
-Personal fork of [xai-org/grok-build](https://github.com/xai-org/grok-build) (SpaceXAI’s terminal coding agent).
-**Not** the official product. **Not** a community alternative.
+<h1>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://media.x.ai/v1/website/spacexai-symbol-white-transparent-0c31957f.png">
+    <source media="(prefers-color-scheme: light)" srcset="https://media.x.ai/v1/website/spacexai-symbol-black-transparent-6435cf42.png">
+    <img alt="SpaceXAI logo" src="https://media.x.ai/v1/website/spacexai-symbol-black-transparent-6435cf42.png" width="96">
+  </picture>
+  <br>
+  Grok Build (<code>grok</code>)
+</h1>
 
-If you are setting this up on a machine that already has stock `grok`, start here and stop when the success checks pass.
+**Grok Build** is SpaceXAI's terminal-based AI coding agent. It runs as a
+full-screen TUI that understands your codebase, edits files, executes shell
+commands, searches the web, and manages long-running tasks — interactively,
+headlessly for scripting/CI, or embedded in editors via the Agent Client
+Protocol (ACP).
 
----
+[Installing the released binary](#installing-the-released-binary) ·
+[Building from source](#building-from-source) ·
+[Documentation](#documentation) ·
+[Repository layout](#repository-layout) ·
+[Development](#development) ·
+[Contributing](#contributing) ·
+[License](#license)
 
-## Install on a new machine
+![Grok Build TUI](https://media.x.ai/v1/website/universe-tui-screenshot-6f7a0837.png)
 
-**Needs:** stock Grok from [x.ai/cli](https://x.ai/cli) already installed · [rustup](https://rustup.rs) · git access to this repo · macOS or Linux.
+**Learn more about Grok Build at [x.ai/cli](https://x.ai/cli)**
 
-```bash
-git clone git@github.com:StephenSHorton/grok-build.git ~/projects/grok-build
-cd ~/projects/grok-build
-./scripts/setup-daily-driver.sh
-```
+This repository contains the Rust source for the `grok` CLI/TUI and its agent
+runtime. It is synced periodically from the SpaceXAI monorepo.
 
-That script adds the `upstream` remote if missing, ensures `dotslash`, runs `install-local.sh` (seed release build + wire daily driver), and **fails** if the daily driver is not the launch wrapper.
+A small `SOURCE_REV` file at the root records the full monorepo commit SHA
+for the version of the code present in this tree.
 
-### Success (install is wrong if either fails)
-
-```bash
-readlink ~/.grok/bin/grok
-# must end with: /scripts/grok
-# must NOT be:   …/downloads/grok-fork-…
-
-grok --version
-# stderr includes: [grok-fork] fetching origin + upstream …
-```
-
-### What you get
-
-| Command | Behavior |
-|---------|----------|
-| `grok` / `agent` | Fork **launcher**: each open fetches **origin** (this fork) + **upstream** (xAI), fast-forwards / rebases when safe, rebuilds **at most once** if `HEAD` moved, then runs the build |
-| `grok-official` | Always stock (escape hatch) |
-
-`~/.grok/config.toml` gets `auto_update = false` so the stock channel does not overwrite the fork entrypoint.
-
-### Do not
-
-- Do **not** run `./scripts/install-local.sh --static-binary` for normal use (frozen binary → **no** auto-update).
-- Do **not** point `~/.grok/bin/grok` at anything under `downloads/grok-fork-*`.
-- Do **not** use stock `grok update` while the fork is the daily driver.
-
-### Repair / rollback
-
-```bash
-cd ~/projects/grok-build   # or wherever you cloned
-./scripts/install-local.sh --skip-build   # re-wire launcher only
-./scripts/install-local.sh --rollback     # stock binary as default grok
-grok-official                             # stock without changing default
-```
-
-Full policy, remotes, and history of the silent-unwire bug: **[FORK.md](FORK.md)**.
+</div>
 
 ---
 
-## What this fork changes
+## Installing the released binary
 
-- **Transparent canvas by default** — host underlay (e.g. suzuri rain) shows through; selection/hover bands kept (`GROK_SOLID_BG=1` for solid stock look)
-- **Launch-time sync** — always origin + upstream, single rebuild when needed
-- Patches live on **`main`**
-
-## Upstream
-
-| | |
-|--|--|
-| Official source | [github.com/xai-org/grok-build](https://github.com/xai-org/grok-build) |
-| Product install | [x.ai/cli](https://x.ai/cli) |
-| Docs / changelog | [docs.x.ai/build](https://docs.x.ai/build/overview) · [changelog](https://x.ai/build/changelog) |
-
-Report Grok Build product bugs **upstream**. This fork does not take external PRs for the public tree ([CONTRIBUTING.md](CONTRIBUTING.md)).
-
-## Building without installing
+Prebuilt binaries are published for macOS, Linux, and Windows:
 
 ```sh
-cargo install dotslash   # once; hermetic bin/protoc
-cargo build -p xai-grok-pager-bin --release   # → target/release/xai-grok-pager
-cargo run -p xai-grok-pager-bin
+curl -fsSL https://x.ai/cli/install.sh | bash   # macOS / Linux / Git Bash
+irm https://x.ai/cli/install.ps1 | iex          # Windows PowerShell
+grok --version
 ```
 
-For daily use, prefer `./scripts/setup-daily-driver.sh` / `install-local.sh` so `grok` stays the launcher.
+See the [changelog](https://x.ai/build/changelog) for the latest fixes,
+features, and improvements in each release.
 
-`SOURCE_REV` is the monorepo commit SHA for this tree.
+## Building from source
 
-## Docs map
+Requirements:
 
-| Doc | Use |
-|-----|-----|
-| **This README** | New-machine install + success checks |
-| [FORK.md](FORK.md) | Invariant, remotes, repair, design notes |
-| [docs.x.ai/build](https://docs.x.ai/build/overview) | Official product docs |
-| `crates/.../docs/user-guide/` | Upstream in-tree guide (avoid fork-only edits; monorepo sync) |
+- **Rust** — the toolchain is pinned by [`rust-toolchain.toml`](rust-toolchain.toml);
+  `rustup` installs it automatically on first build.
+- **[DotSlash](https://dotslash-cli.com)** — required so hermetic tools under
+  [`bin/`](bin/) (notably [`bin/protoc`](bin/protoc)) can download and run.
+  Install it and ensure `dotslash` is on your `PATH` **before** building:
 
-## Layout (short)
+  ```sh
+  cargo install dotslash
+  # or: prebuilt packages — https://dotslash-cli.com/docs/installation/
+  /usr/bin/env dotslash --help   # sanity check
+  ```
 
-| Path | Role |
-|------|------|
-| `scripts/setup-daily-driver.sh` | New-machine one-shot |
-| `scripts/install-local.sh` | Wire launcher / rollback / official escape hatch |
-| `scripts/grok` | Daily-driver launcher (git sync + rebuild + exec) |
-| `scripts/grok-official` | Stock escape hatch |
-| `FORK.md` | Fork operations |
-| `crates/codegen/xai-grok-pager-bin` | Binary composition root |
+- **protoc** — proto codegen resolves [`bin/protoc`](bin/protoc) via DotSlash,
+  or falls back to a `protoc` on `PATH` / `$PROTOC`.
+- macOS and Linux are supported build hosts; Windows builds are best-effort
+  and not currently tested from this tree.
+
+```sh
+cargo run -p xai-grok-pager-bin              # build + launch the TUI
+cargo build -p xai-grok-pager-bin --release  # release binary: target/release/xai-grok-pager
+cargo check -p xai-grok-pager-bin            # fast validation
+```
+
+The binary artifact is named `xai-grok-pager`; official installs ship it as
+`grok`. On first launch it opens your browser to authenticate — see the
+[authentication guide](crates/codegen/xai-grok-pager/docs/user-guide/02-authentication.md).
+
+## Documentation
+
+Full online documentation is available at
+[docs.x.ai/build/overview](https://docs.x.ai/build/overview).
+
+The user guide ships with the pager crate:
+[`crates/codegen/xai-grok-pager/docs/user-guide/`](crates/codegen/xai-grok-pager/docs/user-guide/)
+— getting started, keyboard shortcuts, slash commands, configuration, theming,
+MCP servers, skills, plugins, hooks, headless mode, sandboxing, and more.
+
+## Repository layout
+
+| Path | Contents |
+|------|----------|
+| `crates/codegen/xai-grok-pager-bin` | Composition-root package; builds the `xai-grok-pager` binary |
+| `crates/codegen/xai-grok-pager` | The TUI: scrollback, prompt, modals, rendering |
+| `crates/codegen/xai-grok-shell` | Agent runtime + leader/stdio/headless entry points |
+| `crates/codegen/xai-grok-tools` | Tool implementations (terminal, file edit, search, ...) |
+| `crates/codegen/xai-grok-workspace` | Host filesystem, VCS, execution, checkpoints |
+| `crates/codegen/...` | The rest of the CLI crate closure (config, MCP, markdown, sandbox, ...) |
+| `crates/common/`, `crates/build/`, `prod/mc/` | Small shared leaf crates pulled in by the closure |
+| `third_party/` | Vendored upstream source (Mermaid diagram stack) — see below |
 
 > [!IMPORTANT]
-> Root `Cargo.toml` is **generated** — read-only. Edit per-crate `Cargo.toml` files.
+> The root `Cargo.toml` (workspace members, dependency versions, lints,
+> profiles) is **generated** — treat it as read-only. Prefer editing per-crate
+> `Cargo.toml` files.
+
+## Development
+
+```sh
+cargo check -p <crate>        # always target specific crates; full-workspace builds are slow
+cargo test -p xai-grok-config # per-crate tests
+cargo clippy -p <crate>       # lint config: clippy.toml at the repo root
+cargo fmt --all               # rustfmt.toml at the repo root
+```
+
+## Contributing
+
+> [!NOTE]
+> External contributions are not accepted. See [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## License
 
-First-party: **Apache-2.0** — [`LICENSE`](LICENSE).  
-Third-party: [`THIRD-PARTY-NOTICES`](THIRD-PARTY-NOTICES) and related notice files.
+First-party code in this repository is licensed under the **Apache License,
+Version 2.0** — see [`LICENSE`](LICENSE).
+
+Third-party and vendored code remains under its original licenses. See:
+
+- [`THIRD-PARTY-NOTICES`](THIRD-PARTY-NOTICES) — crates.io / git dependencies,
+  bundled UI themes, and **in-tree source ports** (including openai/codex and
+  sst/opencode tool implementations)
+- [`crates/codegen/xai-grok-tools/THIRD_PARTY_NOTICES.md`](crates/codegen/xai-grok-tools/THIRD_PARTY_NOTICES.md)
+  — crate-local notice for the codex and opencode ports (license texts +
+  Apache §4(b) change notice)
+- [`third_party/NOTICE`](third_party/NOTICE) — vendored Mermaid-stack index

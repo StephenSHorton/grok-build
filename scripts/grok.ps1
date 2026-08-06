@@ -20,7 +20,12 @@
 
 $ErrorActionPreference = 'Stop'
 
-$Repo = if ($env:GROK_FORK_REPO) { $env:GROK_FORK_REPO } else { Join-Path $HOME 'projects\grok-build' }
+# Default repo = parent of this script (works for any clone path).
+if ($env:GROK_FORK_REPO) {
+    $Repo = $env:GROK_FORK_REPO
+} else {
+    $Repo = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+}
 $Branch = if ($env:GROK_FORK_BRANCH) { $env:GROK_FORK_BRANCH } else { 'main' }
 $OriginRemote = if ($env:GROK_ORIGIN_REMOTE) { $env:GROK_ORIGIN_REMOTE } else { 'origin' }
 $OriginRef = if ($env:GROK_ORIGIN_REF) { $env:GROK_ORIGIN_REF } else { $Branch }
@@ -220,7 +225,7 @@ function Rebuild-IfNeeded {
         Write-ForkLog 'warning: dotslash not found; build may need protoc on PATH / PROTOC'
     }
     if (-not $env:PROTOC) {
-        Write-ForkLog 'warning: PROTOC not set; ensure protoc is available (see FORK.md Windows notes)'
+        Write-ForkLog 'warning: PROTOC not set; ensure protoc is available (see AGENTS.md)'
     }
 
     Write-ForkLog 'building release binary once (HEAD moved or binary missing) ...'
@@ -297,19 +302,16 @@ function Main {
         Die "binary not found after build: $Bin"
     }
 
-    if (-not $skipInstall) {
+    # Daily driver is grok.cmd -> this script. Always exec the in-repo release
+    # binary (or GROK_FORK_BIN). Do not copy over bin\grok.exe — that shadows
+    # the launcher (PATHEXT prefers .exe over .cmd).
+    if (-not $skipInstall -and $env:GROK_INSTALL_OVER_STOCK -eq '1') {
+        Write-ForkLog 'GROK_INSTALL_OVER_STOCK=1 — copying into .grok\bin (not recommended)'
         [void](Install-OverStock)
     }
 
-    # Prefer installed copy when present and matches; always can run from target.
     $run = $Bin
-    $installed = Join-Path $InstallDir 'grok.exe'
-    if ((Test-Path $installed) -and -not $skipInstall) {
-        $run = $installed
-    }
-
-    Write-ForkLog "exec $($run)"
-    # Replace this process with the binary so Ctrl+C / exit codes behave normally.
+    Write-ForkLog "exec $run"
     & $run @args
     exit $LASTEXITCODE
 }
