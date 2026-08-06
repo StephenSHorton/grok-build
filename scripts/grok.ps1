@@ -4,12 +4,13 @@
   Grok Build fork launcher for Windows.
 
 .DESCRIPTION
-  On every start (unless skipped):
-    1. git fetch upstream
-    2. if upstream/main moved, rebase our fork branch onto it
-    3. rebuild release binary only when HEAD changed (or binary missing)
-    4. install into ~/.grok/bin (replacing stock) when the binary changes
-    5. exec the fork binary with all args
+  On every start (unless skipped) — one pass, one rebuild max:
+    1. git fetch origin (your GitHub fork)
+    2. git fetch upstream (xai-org/grok-build)
+    3. fast-forward onto origin when behind; rebase onto upstream when moved
+    4. rebuild release binary only when HEAD changed (or binary missing)
+    5. install into ~/.grok/bin (replacing stock) when the binary changes
+    6. exec the fork binary with all args
 
   Skip sync/rebuild:  $env:GROK_SKIP_SYNC = '1'
   Skip rebuild only:  $env:GROK_SKIP_REBUILD = '1'  (still fetches/reports)
@@ -20,7 +21,9 @@
 $ErrorActionPreference = 'Stop'
 
 $Repo = if ($env:GROK_FORK_REPO) { $env:GROK_FORK_REPO } else { Join-Path $HOME 'projects\grok-build' }
-$Branch = if ($env:GROK_FORK_BRANCH) { $env:GROK_FORK_BRANCH } else { 'fork/transparent-bg' }
+$Branch = if ($env:GROK_FORK_BRANCH) { $env:GROK_FORK_BRANCH } else { 'main' }
+$OriginRemote = if ($env:GROK_ORIGIN_REMOTE) { $env:GROK_ORIGIN_REMOTE } else { 'origin' }
+$OriginRef = if ($env:GROK_ORIGIN_REF) { $env:GROK_ORIGIN_REF } else { $Branch }
 $UpstreamRemote = if ($env:GROK_UPSTREAM_REMOTE) { $env:GROK_UPSTREAM_REMOTE } else { 'upstream' }
 $UpstreamRef = if ($env:GROK_UPSTREAM_REF) { $env:GROK_UPSTREAM_REF } else { 'main' }
 $Bin = Join-Path $Repo 'target\release\xai-grok-pager.exe'
@@ -79,17 +82,86 @@ function Test-NeedRebuild {
     return ($head -ne $built)
 }
 
-function Sync-Upstream {
+function Integrate-Origin {
+    $remotes = & git remote
+    if ($remotes -notcontains $OriginRemote) {
+        Write-ForkLog "no remote '$OriginRemote' - skipping fork pull"
+        return
+    }
+    $originTip = & git rev-parse "$OriginRemote/$OriginRef" 2>$null
+    if ($LASTEXITCODE -ne 0 -or -not $originTip) {
+        Write-ForkLog "warning: missing $OriginRemote/$OriginRef after fetch - skipping fork pull"
+        return
+    }
+    $originTip = $originTip.Trim()
+    $head = (& git rev-parse HEAD).Trim()
+    if ($head -eq $originTip) {
+        $short = (& git rev-parse --short "$OriginRemote/$OriginRef").Trim()
+        Write-ForkLog "already up to date with $OriginRemote/$OriginRef ($short)"
+        return
+    }
+    $base = (& git merge-base HEAD "$OriginRemote/$OriginRef").Trim()
+    if ($base -eq $head) {
+        $behind = (& git rev-list --count "HEAD..$OriginRemote/$OriginRef" 2>$null)
+        if (-not $behind) { $behind = '?' }
+        Write-ForkLog "origin is $behind commit(s) ahead - fast-forwarding $Branch to $OriginRemote/$OriginRef"
+        & git merge --ff-only "$OriginRemote/$OriginRef" 2>$null | Out-Null
+        if ($LASTEXITCODE -eq 0) {
+            $short = (& git rev-parse --short HEAD).Trim()
+            Write-ForkLog "fast-forward complete ($short)"
+        } else {
+            Write-ForkLog 'warning: fast-forward from origin failed - launching current tree'
+        }
+        return
+    }
+    if ($base -eq $originTip) {
+        $ahead = (& git rev-list --count "$OriginRemote/$OriginRef..HEAD" 2>$null)
+        if (-not $ahead) { $ahead = '?' }
+        Write-ForkLog "local is $ahead commit(s) ahead of $OriginRemote/$OriginRef (not pushed; ok)"
+        return
+    }
+    $behind = (& git rev-list --count "HEAD..$OriginRemote/$OriginRef" 2>$null)
+    if (-not $behind) { $behind = '?' }
+    Write-ForkLog "origin and local have diverged (+$behind on origin) - not auto-merging"
+}
+
+function Integrate-Upstream {
+    $remotes = & git remote
+    if ($remotes -notcontains $UpstreamRemote) {
+        Write-ForkLog "warning: missing remote '$UpstreamRemote' - skipping upstream rebase"
+        return
+    }
+    $up = & git rev-parse "$UpstreamRemote/$UpstreamRef" 2>$null
+    if ($LASTEXITCODE -ne 0 -or -not $up) {
+        Write-ForkLog "warning: missing $UpstreamRemote/$UpstreamRef after fetch - skipping upstream rebase"
+        return
+    }
+    $up = $up.Trim()
+    $base = (& git merge-base HEAD "$UpstreamRemote/$UpstreamRef").Trim()
+    if ($base -eq $up) {
+        $short = (& git rev-parse --short HEAD).Trim()
+        Write-ForkLog "already up to date with $UpstreamRemote/$UpstreamRef ($short)"
+        return
+    }
+    $behind = (& git rev-list --count "HEAD..$UpstreamRemote/$UpstreamRef" 2>$null)
+    if (-not $behind) { $behind = '?' }
+    Write-ForkLog "upstream is $behind commit(s) ahead - rebasing $Branch onto $UpstreamRemote/$UpstreamRef"
+    & git rebase "$UpstreamRemote/$UpstreamRef"
+    if ($LASTEXITCODE -ne 0) {
+        Write-ForkLog "rebase hit conflicts - aborting and continuing with current tree"
+        & git rebase --abort 2>$null | Out-Null
+        return
+    }
+    $short = (& git rev-parse --short HEAD).Trim()
+    Write-ForkLog "rebase complete ($short)"
+}
+
+function Sync-Remotes {
     if (-not (Test-Path (Join-Path $Repo '.git'))) {
         Die "repo not found: $Repo"
     }
     Push-Location $Repo
     try {
-        $remotes = & git remote
-        if ($remotes -notcontains $UpstreamRemote) {
-            Die "missing remote '$UpstreamRemote' (expected xai-org/grok-build)"
-        }
-
         $current = (& git rev-parse --abbrev-ref HEAD).Trim()
         if ($current -ne $Branch) {
             Write-ForkLog "checking out $Branch (was on $current)"
@@ -98,48 +170,30 @@ function Sync-Upstream {
         }
 
         $stashed = $false
-        $status = & git status --porcelain
+        # Tracked-only (never -u — untracked can include huge trees)
+        $status = & git status --porcelain -uno
         if ($status) {
-            Write-ForkLog 'stashing local uncommitted changes for rebase'
+            Write-ForkLog 'stashing tracked local changes for sync (untracked left alone)'
             $stampMsg = "grok-fork-launch $([DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mmZ'))"
-            & git stash push -u -m $stampMsg | Out-Null
+            & git stash push -m $stampMsg | Out-Null
             $stashed = $true
         }
 
-        Write-ForkLog "fetching $UpstreamRemote/$UpstreamRef ..."
-        & git fetch --quiet $UpstreamRemote $UpstreamRef
-        if ($LASTEXITCODE -ne 0) {
-            Write-ForkLog 'warning: fetch failed (offline?). continuing with current tree.'
-            if ($stashed) {
-                & git stash pop 2>$null | Out-Null
-                if ($LASTEXITCODE -ne 0) { Write-ForkLog 'warning: could not restore stash' }
-            }
-            return
+        Write-ForkLog "fetching $OriginRemote + $UpstreamRemote ..."
+        $remotes = & git remote
+        if ($remotes -contains $OriginRemote) {
+            & git fetch --quiet $OriginRemote $OriginRef 2>$null
+            if ($LASTEXITCODE -ne 0) { Write-ForkLog "warning: fetch $OriginRemote failed (offline?)" }
         }
-
-        $head = (& git rev-parse HEAD).Trim()
-        $up = (& git rev-parse "$UpstreamRemote/$UpstreamRef").Trim()
-        $base = (& git merge-base HEAD "$UpstreamRemote/$UpstreamRef").Trim()
-
-        if ($base -ne $up) {
-            $behind = (& git rev-list --count "HEAD..$UpstreamRemote/$UpstreamRef" 2>$null)
-            if (-not $behind) { $behind = '?' }
-            Write-ForkLog "upstream is $behind commit(s) ahead - rebasing $Branch onto $UpstreamRemote/$UpstreamRef"
-            & git rebase "$UpstreamRemote/$UpstreamRef"
-            if ($LASTEXITCODE -ne 0) {
-                Write-ForkLog "rebase hit conflicts. Resolve in $Repo, then:"
-                Write-ForkLog '  git rebase --continue'
-                Write-ForkLog '  cargo build -p xai-grok-pager-bin --release'
-                Write-ForkLog "  git rev-parse HEAD > $Stamp"
-                if ($stashed) { Write-ForkLog "(your stash is still in 'git stash list')" }
-                exit 1
-            }
-            $short = (& git rev-parse --short HEAD).Trim()
-            Write-ForkLog "rebase complete ($short)"
+        if ($remotes -contains $UpstreamRemote) {
+            & git fetch --quiet $UpstreamRemote $UpstreamRef 2>$null
+            if ($LASTEXITCODE -ne 0) { Write-ForkLog "warning: fetch $UpstreamRemote failed (offline?)" }
         } else {
-            $short = (& git rev-parse --short HEAD).Trim()
-            Write-ForkLog "already up to date with $UpstreamRemote/$UpstreamRef ($short)"
+            Write-ForkLog "warning: missing remote '$UpstreamRemote'"
         }
+
+        Integrate-Origin
+        Integrate-Upstream
 
         if ($stashed) {
             & git stash pop 2>$null | Out-Null
@@ -169,7 +223,7 @@ function Rebuild-IfNeeded {
         Write-ForkLog 'warning: PROTOC not set; ensure protoc is available (see FORK.md Windows notes)'
     }
 
-    Write-ForkLog 'building release binary (this can take a few minutes) ...'
+    Write-ForkLog 'building release binary once (HEAD moved or binary missing) ...'
     Push-Location $Repo
     try {
         & cargo build -p xai-grok-pager-bin --release
@@ -232,7 +286,7 @@ function Main {
     if (-not $skipSync -or -not $skipRebuild) {
         Acquire-Lock
         try {
-            if (-not $skipSync) { Sync-Upstream }
+            if (-not $skipSync) { Sync-Remotes }
             if (-not $skipRebuild) { Rebuild-IfNeeded }
         } finally {
             Release-Lock

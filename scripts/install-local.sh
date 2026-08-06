@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
-# Install a self-built grok binary as the daily driver under ~/.grok/
-# (replaces stock bin/grok + bin/agent symlinks without deleting stock downloads).
+# Install the fork *launcher* as the daily driver under ~/.grok/
+# (replaces stock bin/grok + bin/agent without deleting stock downloads).
+#
+# CRITICAL: ~/.grok/bin/grok must be the launch wrapper (scripts/grok), NOT a
+# static binary. The wrapper fetches origin + upstream and rebuilds at most once
+# per launch. Pointing bin/grok at a frozen binary silently kills auto-update.
 #
 # Always maintains ~/.grok/bin/grok-official — escape hatch to stock even when
 # bin/grok is the fork. Never overwritten by fork install.
@@ -14,24 +18,32 @@ FORK_NAME="grok-fork-macos-aarch64"
 FORK_PATH="$DOWNLOADS/$FORK_NAME"
 BINARY="$REPO_ROOT/target/release/xai-grok-pager"
 PACKAGE="xai-grok-pager-bin"
+LAUNCHER_SRC="$REPO_ROOT/scripts/grok"
 OFFICIAL_SCRIPT_SRC="$REPO_ROOT/scripts/grok-official"
+STAMP="$REPO_ROOT/.fork-built-at"
 
 SKIP_BUILD=0
 ROLLBACK=0
 ENSURE_OFFICIAL=0
+STATIC_BINARY=0
 DISABLE_AUTO_UPDATE=1
 
 usage() {
   cat <<'EOF'
 Usage: ./scripts/install-local.sh [options]
 
-  Install this repo's release binary as ~/.grok/bin/grok (and agent).
+  Wire the fork launcher as ~/.grok/bin/grok (and agent) so every open:
+    - fetches origin (your GitHub fork) + upstream (xai-org)
+    - fast-forwards / rebases when possible
+    - rebuilds the release binary at most once if HEAD moved
   Always refreshes ~/.grok/bin/grok-official → stock escape hatch.
 
 Options:
-  --skip-build       Use existing target/release/xai-grok-pager (do not cargo build)
+  --skip-build       Do not cargo build (first launch will build if needed)
+  --static-binary    DANGEROUS/legacy: install a frozen binary as bin/grok
+                     (disables launch-time git sync — not recommended)
   --rollback         Point bin/grok at the newest stock download (not the fork)
-  --ensure-official  Only install/update grok-official (no build / no fork link)
+  --ensure-official  Only install/update grok-official (no launcher / no build)
   --keep-auto-update Do not set auto_update = false in ~/.grok/config.toml
   -h, --help         Show this help
 
@@ -47,6 +59,7 @@ EOF
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --skip-build) SKIP_BUILD=1; shift ;;
+    --static-binary) STATIC_BINARY=1; shift ;;
     --rollback) ROLLBACK=1; shift ;;
     --ensure-official) ENSURE_OFFICIAL=1; shift ;;
     --keep-auto-update) DISABLE_AUTO_UPDATE=0; shift ;;
@@ -82,12 +95,25 @@ newest_stock_binary() {
   printf '%s' "$candidate"
 }
 
-link_bin() {
-  local target_rel="$1"
-  ln -sfn "$target_rel" "$BIN_DIR/grok"
-  ln -sfn "$target_rel" "$BIN_DIR/agent"
-  echo "linked $BIN_DIR/grok -> $target_rel"
-  echo "linked $BIN_DIR/agent -> $target_rel"
+link_bin_to() {
+  local target="$1"
+  ln -sfn "$target" "$BIN_DIR/grok"
+  ln -sfn "$target" "$BIN_DIR/agent"
+  echo "linked $BIN_DIR/grok -> $target"
+  echo "linked $BIN_DIR/agent -> $target"
+}
+
+# Daily driver = launch wrapper (absolute path into this checkout).
+install_launcher() {
+  [[ -f "$LAUNCHER_SRC" ]] || die "missing $LAUNCHER_SRC"
+  [[ -x "$LAUNCHER_SRC" ]] || chmod +x "$LAUNCHER_SRC"
+  # Absolute symlink so it works from any cwd; re-run install if the repo moves.
+  link_bin_to "$LAUNCHER_SRC"
+  # Optional convenience on ~/.local/bin when present (same wrapper).
+  local local_bin="${HOME}/.local/bin"
+  if [[ -d "$local_bin" ]]; then
+    ln -sfn "$LAUNCHER_SRC" "$local_bin/grok-fork" 2>/dev/null || true
+  fi
 }
 
 # Install grok-official launcher (always stock). Never points at the fork.
@@ -170,44 +196,31 @@ auto_update = false
   fi
 }
 
-do_rollback() {
-  ensure_layout
-  install_official_escape
-  local stock
-  stock="$(newest_stock_binary)"
-  [[ -n "$stock" && -x "$stock" ]] || die "no stock binary found under $DOWNLOADS"
-  local base
-  base="$(basename "$stock")"
-  link_bin "../downloads/$base"
-  echo "rolled back to stock: $base"
-  "$BIN_DIR/grok" --version || true
+seed_build() {
+  command -v cargo >/dev/null || die "cargo not found"
+  if ! command -v dotslash >/dev/null; then
+    echo "warning: dotslash not on PATH (bin/protoc needs it; install: cargo install dotslash)" >&2
+  fi
+  echo "seeding release build ($PACKAGE) so first launch can skip cargo if HEAD is unchanged…"
+  (cd "$REPO_ROOT" && cargo build -p "$PACKAGE" --release)
+  [[ -x "$BINARY" ]] || die "missing binary after build: $BINARY"
+  git -C "$REPO_ROOT" rev-parse HEAD >"$STAMP" 2>/dev/null || true
+  echo "seed build ok → $BINARY (stamp written; launcher will not rebuild until HEAD moves)"
 }
 
-do_install() {
+# Legacy path: frozen signed binary as daily driver (disables auto-sync).
+do_static_binary_install() {
   ensure_layout
-  # Escape hatch first so it exists even if the fork link step aborts later.
   install_official_escape
 
   if [[ "$SKIP_BUILD" -eq 0 ]]; then
-    command -v cargo >/dev/null || die "cargo not found"
-    if ! command -v dotslash >/dev/null; then
-      echo "warning: dotslash not on PATH (bin/protoc needs it; install: cargo install dotslash)" >&2
-    fi
-    echo "building release ($PACKAGE)…"
-    (cd "$REPO_ROOT" && cargo build -p "$PACKAGE" --release)
+    seed_build
   fi
-
   [[ -x "$BINARY" ]] || die "missing binary: $BINARY (build first or omit --skip-build)"
 
-  # Copy to a temp name first, re-sign, smoke-test — only then replace the
-  # live fork path and retarget symlinks. Never leave bin/ pointing at a
-  # binary that immediately SIGKILLs (codesign invalid page).
   local staging="$FORK_PATH.staging"
   cp -f "$BINARY" "$staging"
   chmod +x "$staging"
-  # cargo's linker-signed adhoc blob uses 4k pages and is often rejected at
-  # runtime under modern macOS ("zsh: killed", CODESIGNING Invalid Page) once
-  # the file is copied out of target/. Re-sign with codesign (16k pages).
   if command -v codesign >/dev/null; then
     codesign -s - --force --timestamp=none "$staging" \
       || die "codesign adhoc re-sign failed for $staging"
@@ -216,32 +229,79 @@ do_install() {
   else
     echo "warning: codesign not found; binary may be killed by macOS (Invalid Page)" >&2
   fi
-  # Drop quarantine / provenance that can confuse Gatekeeper on copied builds.
   if command -v xattr >/dev/null; then
     xattr -cr "$staging" 2>/dev/null || true
   fi
-
   if ! "$staging" --version >/dev/null 2>&1; then
     local ec=$?
     rm -f "$staging"
-    die "smoke test failed (exit $ec): $staging --version — not linking bin/grok (stock + grok-official unchanged)"
+    die "smoke test failed (exit $ec): $staging --version — not linking bin/grok"
   fi
-
   mv -f "$staging" "$FORK_PATH"
   echo "installed $FORK_PATH (adhoc re-signed)"
+  link_bin_to "../downloads/$FORK_NAME"
+  echo
+  echo "WARNING: --static-binary installed a frozen daily driver."
+  echo "  Launch-time origin/upstream sync is OFF until you re-run without --static-binary."
+}
 
-  link_bin "../downloads/$FORK_NAME"
+do_rollback() {
+  ensure_layout
+  install_official_escape
+  local stock
+  stock="$(newest_stock_binary)"
+  [[ -n "$stock" && -x "$stock" ]] || die "no stock binary found under $DOWNLOADS"
+  local base
+  base="$(basename "$stock")"
+  # Relative link matches stock installer layout.
+  link_bin_to "../downloads/$base"
+  echo "rolled back to stock: $base"
+  "$BIN_DIR/grok" --version || true
+}
+
+do_install() {
+  ensure_layout
+  # Escape hatch first so it exists even if later steps abort.
+  install_official_escape
+
+  if [[ "$STATIC_BINARY" -eq 1 ]]; then
+    do_static_binary_install
+  else
+    install_launcher
+    if [[ "$SKIP_BUILD" -eq 0 ]]; then
+      seed_build
+    else
+      echo "skipped seed build; first grok launch will build if needed"
+    fi
+  fi
 
   if [[ "$DISABLE_AUTO_UPDATE" -eq 1 ]]; then
     disable_auto_update
   fi
 
   echo
-  echo "fork:    $($BIN_DIR/grok --version 2>/dev/null || echo '?')"
-  echo "official:$($BIN_DIR/grok-official --version 2>/dev/null || echo '?')"
+  echo "daily driver: $BIN_DIR/grok -> $(readlink "$BIN_DIR/grok" 2>/dev/null || echo '?')"
+  if [[ "$STATIC_BINARY" -eq 0 ]]; then
+    echo "  (launcher: origin + upstream sync on every open; one rebuild max)"
+  fi
+  echo -n "fork:     "
+  # Skip sync so install doesn't hang on network; still hits the binary path.
+  if GROK_SKIP_SYNC=1 GROK_SKIP_REBUILD=1 "$BIN_DIR/grok" --version 2>/dev/null; then
+    :
+  else
+    # Launcher may log to stderr before exec; try binary directly.
+    if [[ -x "$BINARY" ]]; then
+      "$BINARY" --version 2>/dev/null || echo "(build pending — run grok once)"
+    else
+      echo "(build pending — run grok once)"
+    fi
+  fi
+  echo -n "official: "
+  "$BIN_DIR/grok-official" --version 2>/dev/null || echo '?'
   echo
   echo "Done. If the fork misbehaves:  grok-official"
   echo "Full rollback of default grok: ./scripts/install-local.sh --rollback"
+  echo "Re-wire launcher after moving the checkout: ./scripts/install-local.sh --skip-build"
 }
 
 if [[ "$ENSURE_OFFICIAL" -eq 1 ]]; then
