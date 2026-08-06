@@ -4,7 +4,7 @@
   Grok Build fork launcher for Windows.
 
 .DESCRIPTION
-  On every start (unless skipped) — one pass, one rebuild max:
+  On every start (unless skipped) - one pass, one rebuild max:
     1. git fetch origin (your GitHub fork)
     2. git fetch upstream (xai-org/grok-build)
     3. fast-forward onto origin when behind; rebase onto upstream when moved
@@ -175,7 +175,7 @@ function Sync-Remotes {
         }
 
         $stashed = $false
-        # Tracked-only (never -u — untracked can include huge trees)
+        # Tracked-only (never -u - untracked can include huge trees)
         $status = & git status --porcelain -uno
         if ($status) {
             Write-ForkLog 'stashing tracked local changes for sync (untracked left alone)'
@@ -270,7 +270,7 @@ function Install-OverStock {
         try {
             Copy-Item -LiteralPath $Bin -Destination $dest -Force -ErrorAction Stop
         } catch {
-            # Common when an older grok is still running — fall back to running from target/
+            # Common when an older grok is still running - fall back to running from target/
             Write-ForkLog "warning: could not install $name (file in use?). Will run from repo target."
             return $false
         }
@@ -303,10 +303,10 @@ function Main {
     }
 
     # Daily driver is grok.cmd -> this script. Always exec the in-repo release
-    # binary (or GROK_FORK_BIN). Do not copy over bin\grok.exe — that shadows
+    # binary (or GROK_FORK_BIN). Do not copy over bin\grok.exe - that shadows
     # the launcher (PATHEXT prefers .exe over .cmd).
     if (-not $skipInstall -and $env:GROK_INSTALL_OVER_STOCK -eq '1') {
-        Write-ForkLog 'GROK_INSTALL_OVER_STOCK=1 — copying into .grok\bin (not recommended)'
+        Write-ForkLog 'GROK_INSTALL_OVER_STOCK=1 - copying into .grok\bin (not recommended)'
         [void](Install-OverStock)
     }
 

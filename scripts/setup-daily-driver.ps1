@@ -40,12 +40,12 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host ''
 
 if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
-    Die 'cargo not found — install Rust from https://rustup.rs then re-run'
+    Die 'cargo not found - install Rust from https://rustup.rs then re-run'
 }
 Ok "cargo=$(Get-Command cargo | Select-Object -ExpandProperty Source)"
 
 if (-not (Get-Command dotslash -ErrorAction SilentlyContinue)) {
-    Write-Host 'installing dotslash…'
+    Write-Host 'installing dotslash...'
     & cargo install dotslash
     if ($LASTEXITCODE -ne 0) { Die 'cargo install dotslash failed' }
 }
@@ -53,17 +53,17 @@ Ok "dotslash present"
 
 $grokHome = if ($env:GROK_HOME) { $env:GROK_HOME } else { Join-Path $HOME '.grok' }
 if (-not (Test-Path $grokHome)) {
-    Write-Host "warning: $grokHome missing — install stock Grok from https://x.ai/cli first"
+    Write-Host "warning: $grokHome missing - install stock Grok from https://x.ai/cli first"
 }
 
-Write-Host 'running install-local.ps1 (seed release build; can take a long time on Windows)…'
+Write-Host 'running install-local.ps1 (seed release build; can take a long time on Windows)...'
 & (Join-Path $RepoRoot 'scripts\install-local.ps1')
 if ($LASTEXITCODE -ne 0) { Die 'install-local.ps1 failed' }
 
 $cmd = Join-Path $grokHome 'bin\grok.cmd'
 if (-not (Test-Path $cmd)) { Die "missing $cmd after install" }
 if (Test-Path (Join-Path $grokHome 'bin\grok.exe')) {
-    Die 'grok.exe still in bin/ — would shadow grok.cmd. Re-run install-local.ps1'
+    Die 'grok.exe still in bin/ - would shadow grok.cmd. Re-run install-local.ps1'
 }
 Ok "daily driver -> $cmd"
 Write-Host ''
