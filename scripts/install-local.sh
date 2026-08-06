@@ -259,6 +259,27 @@ do_rollback() {
   "$BIN_DIR/grok" --version || true
 }
 
+
+verify_launcher_link() {
+  local link target
+  link="$BIN_DIR/grok"
+  [[ -e "$link" ]] || die "missing $link after install"
+  if [[ -L "$link" ]]; then
+    target="$(readlink "$link")"
+  else
+    target="$link"
+  fi
+  case "$target" in
+    */scripts/grok) echo "verified: $link -> $target" ;;
+    *)
+      die "daily driver is not the launch wrapper.
+  expected: …/scripts/grok
+  got:      $target
+  re-run without --static-binary:  $0 --skip-build"
+      ;;
+  esac
+}
+
 do_install() {
   ensure_layout
   # Escape hatch first so it exists even if later steps abort.
@@ -273,6 +294,7 @@ do_install() {
     else
       echo "skipped seed build; first grok launch will build if needed"
     fi
+    verify_launcher_link
   fi
 
   if [[ "$DISABLE_AUTO_UPDATE" -eq 1 ]]; then
