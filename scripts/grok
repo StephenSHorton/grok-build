@@ -24,10 +24,29 @@
 set -uo pipefail
 # Note: not `set -e` — prefer launching over dying mid-sync.
 
-# Default repo = parent of this script (works no matter where the clone lives).
-# Override with GROK_FORK_REPO only when the launcher is copied out of the tree.
-_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
-_DEFAULT_REPO="$(cd "$_SCRIPT_DIR/.." && pwd)"
+# Default repo = parent of this script after resolving symlinks.
+# install-local points ~/.grok/bin/grok → …/scripts/grok; without resolving the
+# link, dirname would be ~/.grok/bin and we'd wrongly treat ~/.grok as the repo.
+_resolve_script_dir() {
+  local src="${BASH_SOURCE[0]:-$0}"
+  while [[ -L "$src" ]]; do
+    local dir link
+    dir="$(cd "$(dirname "$src")" && pwd)" || return 1
+    link="$(readlink "$src")" || return 1
+    if [[ "$link" == /* ]]; then
+      src="$link"
+    else
+      src="$dir/$link"
+    fi
+  done
+  cd "$(dirname "$src")" && pwd
+}
+_SCRIPT_DIR="$(_resolve_script_dir 2>/dev/null || true)"
+if [[ -n "$_SCRIPT_DIR" && -d "$_SCRIPT_DIR/.." ]]; then
+  _DEFAULT_REPO="$(cd "$_SCRIPT_DIR/.." && pwd)"
+else
+  _DEFAULT_REPO="${HOME}/projects/grok-build"
+fi
 REPO="${GROK_FORK_REPO:-$_DEFAULT_REPO}"
 BRANCH="${GROK_FORK_BRANCH:-main}"
 ORIGIN_REMOTE="${GROK_ORIGIN_REMOTE:-origin}"
