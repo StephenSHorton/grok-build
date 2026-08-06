@@ -10,8 +10,9 @@ It is **not** the official product, and it is **not** a community-maintained alt
 Local builds and experiments on top of the public source tree:
 
 - **Transparent canvas by default** — app canvas cleared so the host underlay (e.g. suzuri rain) shows through; selection/hover bands kept so lists stay readable (`GROK_SOLID_BG=1` for stock solid look)
-- Daily-driver install that **replaces** the stock `~/.grok/bin/grok` binary
-- Personal patches on feature branches while keeping `main` easy to sync with upstream
+- **Launch-time auto-update** — `grok` is the wrapper (`scripts/grok`): every open fetches **origin** (your fork) + **upstream** (xAI), then rebuilds **at most once** if `HEAD` moved
+- Daily-driver install that wires that wrapper over stock `~/.grok/bin/grok` (never leave a frozen binary as `grok`)
+- Personal patches on `main` while staying current with upstream
 - Source inspection / debugging against a known monorepo `SOURCE_REV`
 
 ## Upstream
@@ -27,17 +28,19 @@ External PRs are not accepted on the public tree (see [CONTRIBUTING.md](CONTRIBU
 
 ## Daily driver (replace stock)
 
-Full notes: **[FORK.md](FORK.md)**.
+Full notes: **[FORK.md](FORK.md)** (includes the “must be the launcher” invariant).
 
 ```bash
 # once: remotes + deps
 git remote add upstream https://github.com/xai-org/grok-build.git   # if missing
 cargo install dotslash                                              # if missing
 
-# build + install over ~/.grok/bin/{grok,agent}, disable auto_update
+# seed build + wire launcher as ~/.grok/bin/{grok,agent}, auto_update=false
 ./scripts/install-local.sh
 
-grok --version   # new shell if this session still has the old binary
+# sanity: must resolve to scripts/grok, not downloads/grok-fork-*
+readlink ~/.grok/bin/grok
+grok --version   # logs [grok-fork] fetch/sync lines on stderr
 ```
 
 Rollback to the newest stock download under `~/.grok/downloads/`:
@@ -45,6 +48,8 @@ Rollback to the newest stock download under `~/.grok/downloads/`:
 ```bash
 ./scripts/install-local.sh --rollback
 ```
+
+If the fork is broken but you need stock immediately: `grok-official`.
 
 ---
 
