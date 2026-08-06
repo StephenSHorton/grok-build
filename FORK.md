@@ -88,6 +88,48 @@ git rev-list --count HEAD..upstream/main   # 0 = fully rebased onto xAI
 
 Soft failures (diverged origin, rebase conflicts) write `~/projects/grok-build/.fork-upstream-status` and still launch the last good binary.
 
+## New machine (stock Grok already installed)
+
+Copy-paste setup. Assumes macOS/Linux, stock CLI already on `PATH`, and you can
+build Rust release binaries.
+
+```bash
+# 1) Clone YOUR fork (not xai-org), any path is fine
+mkdir -p ~/projects
+git clone git@github.com:StephenSHorton/grok-build.git ~/projects/grok-build
+cd ~/projects/grok-build
+git checkout main
+
+# 2) Remotes: origin=fork (set by clone), add upstream once
+git remote add upstream https://github.com/xai-org/grok-build.git   # ignore error if exists
+git fetch upstream
+
+# 3) Build deps (once per machine)
+#    - Rust: https://rustup.rs  (rust-toolchain.toml pins the channel)
+#    - DotSlash for hermetic bin/protoc:
+cargo install dotslash
+
+# 4) Wire daily driver = launcher (NOT a frozen binary)
+./scripts/install-local.sh
+# first run seeds a release build (can take several minutes), then:
+#   ~/.grok/bin/grok  →  …/scripts/grok
+#   ~/.grok/bin/grok-official → stock escape hatch
+#   auto_update = false
+
+# 5) Must-pass sanity checks
+readlink ~/.grok/bin/grok
+# → absolute path ending in /scripts/grok   (FAIL if downloads/grok-fork-*)
+grok --version
+# stderr should include: [grok-fork] fetching origin + upstream …
+```
+
+**Tell an agent on the other machine:** read `FORK.md` “New machine” + “Critical invariant”;
+run those steps; **never** pass `--static-binary`; abort if `readlink` is not `scripts/grok`.
+
+If the clone is not under `~/projects/grok-build`, that is fine: `install-local.sh`
+symlinks the launcher from whatever checkout you ran it in, and the launcher
+defaults `GROK_FORK_REPO` to its own repo root.
+
 ## Daily driver install
 
 Stock CLI lives under `~/.grok/`:
@@ -126,7 +168,7 @@ grok --version             # fork launcher → fork binary
 | `GROK_SKIP_SYNC=1` | don’t fetch/ff/rebase |
 | `GROK_SKIP_REBUILD=1` | don’t cargo build |
 | `GROK_SOLID_BG=1` | stock solid backgrounds |
-| `GROK_FORK_REPO` | override checkout path (default `~/projects/grok-build`) |
+| `GROK_FORK_REPO` | override checkout path (default: parent of `scripts/grok`) |
 | `GROK_FORK_BRANCH` | branch to keep checked out (default `main`) |
 
 ### Manual build (normally unnecessary)
