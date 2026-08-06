@@ -96,4 +96,4 @@ echo
 echo "== setup complete =="
 echo "Every open of \`grok\` will fetch origin + upstream and rebuild at most once if HEAD moved."
 echo "Escape hatch (stock): grok-official"
-echo "Details: $REPO_ROOT/FORK.md"
+echo "Details: $REPO_ROOT/AGENTS.md"
