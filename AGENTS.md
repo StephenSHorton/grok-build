@@ -20,13 +20,17 @@ This checkout is **Stephen’s personal fork** of [`xai-org/grok-build`](https:/
 
 ## What every open of `grok` does
 
-One pass, **at most one rebuild** (or one prebuilt fetch later — see “Prebuilt releases”):
+**Intentional model: local git + local `cargo`.** Rust on each machine is fine and expected.
+Every launch re-checks remotes and rebuilds only when the tree actually moved — that is how
+we stay on latest (origin patches and upstream monorepo syncs), not via GitHub Release downloads.
+
+One pass, **at most one rebuild**:
 
 1. `git fetch origin` (this fork on GitHub)
 2. `git fetch upstream` (`xai-org/grok-build`)
 3. Fast-forward onto origin when behind (no auto-push; no auto-merge if diverged)
 4. Rebase onto `upstream/main` when upstream moved
-5. Build release binary only if `HEAD` changed (or binary missing)
+5. `cargo build --release` only if `HEAD` changed (or binary missing)
 6. Exec the binary (`xai-grok-pager` / `.exe`)
 
 Escape hatch (always stock): `grok-official` (Unix) / `grok-official.cmd` (Windows).
@@ -108,7 +112,7 @@ grok --version                         # stderr: [grok-fork] …
 | Variable | Effect |
 |----------|--------|
 | `GROK_SKIP_SYNC=1` | skip fetch / ff / rebase |
-| `GROK_SKIP_REBUILD=1` | skip cargo (and later: skip download) |
+| `GROK_SKIP_REBUILD=1` | skip cargo |
 | `GROK_SOLID_BG=1` | stock solid canvas backgrounds |
 | `GROK_FORK_REPO` | override checkout path |
 | `GROK_FORK_BRANCH` | default `main` |
@@ -128,32 +132,16 @@ git remote add upstream https://github.com/xai-org/grok-build.git   # once
 
 ---
 
-## Prebuilt releases (suzuri-style) — design notes, not required today
+## Why local build (not CI prebuilts)
 
-**Today:** each machine builds with `cargo` after git sync. Works offline-ish once cached; needs Rust everywhere; Windows builds are slow/fragile.
+We deliberately do **not** ship fork binaries via GitHub Actions the way suzuri does app releases.
 
-**Suzuri model:** tag/push → GitHub Actions builds OS matrices → release assets → clients download.
+- Opening `grok` already **fetches origin + upstream** and rebases when needed → source is current.
+- Rebuild runs **only if `HEAD` moved** → you get the latest code without a release train or download channel.
+- Same loop on every OS that has Rust; no “which release asset matches this SHA” machinery.
+- Stock Grok still has its own install channel (`grok-official`); the fork stays a thin launcher over a local tree.
 
-**Why we might want that here**
-
-- No Rust toolchain on every laptop
-- Windows machines stop fighting local MSVC/protoc
-- Faster “open Grok after someone pushed a fix”
-
-**Why it’s not a free win**
-
-- This workspace is a large Rust monorepo slice; CI minutes and caches are heavy (not a small Go host like suzuri)
-- Launch-time **git** sync (origin + upstream rebase) is still needed for *source* truth; prebuilts only replace the **cargo** step
-- macOS notarization/Developer ID optional for personal use (adhoc is enough for self)
-- Must stamp each asset with git SHA so the launcher downloads only when `HEAD` (post-sync) ≠ installed SHA — still **one** binary update per open, not cargo + download
-
-**Target shape (when implemented)**
-
-1. Workflow on `main` (and/or tags): matrix `macos-aarch64`, `linux-x86_64`, `windows-x86_64` → `cargo build -p xai-grok-pager-bin --release` → upload to GitHub Releases named by SHA/OS.
-2. Launcher after git sync: if a release asset exists for `HEAD`+OS, download into `~/.grok/downloads/` (or repo `target/release/`) and skip cargo; else cargo fallback.
-3. Same success rule: daily driver remains the **launcher** scripts, never “only the downloaded exe on PATH”.
-
-Until that exists, use local cargo via the setup scripts above.
+Prerequisites on each machine: stock Grok + rustup + this clone. That is the product.
 
 ---
 
