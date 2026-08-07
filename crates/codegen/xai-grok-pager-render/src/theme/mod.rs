@@ -49,6 +49,52 @@ pub fn transparent_canvas_enabled() -> bool {
     }
 }
 
+/// Minimum mean RGB for list selection (`bg_visual`) over a transparent canvas.
+/// Theme-native GrokNight `#363636` (mean 54) is correct on solid chrome but
+/// washes out over ambient rain — hosts skip pure-black cells and will not
+/// invent a band from bold alone.
+const TRANSPARENT_SELECTION_FLOOR: u8 = 96;
+/// Hover / highlight band floor (slightly under selection).
+const TRANSPARENT_HOVER_FLOOR: u8 = 80;
+/// Dim prompt / code / paste elevated surfaces.
+const TRANSPARENT_DIM_FLOOR: u8 = 48;
+
+/// Raise an RGB background to at least `min_mean` mean channel, or return
+/// `None` if the color is not RGB (named/indexed/Reset — caller decides).
+///
+/// Preserves relative channel balance by lifting the shortfall equally.
+#[must_use]
+fn floor_lift_bg(color: ratatui::style::Color, min_mean: u8) -> Option<ratatui::style::Color> {
+    use ratatui::style::Color;
+    let Color::Rgb(r, g, b) = color else {
+        return None;
+    };
+    let mean = (u16::from(r) + u16::from(g) + u16::from(b)) / 3;
+    if mean >= u16::from(min_mean) {
+        return Some(Color::Rgb(r, g, b));
+    }
+    let boost = u16::from(min_mean).saturating_sub(mean);
+    let lift = |c: u8| -> u8 {
+        u16::from(c)
+            .saturating_add(boost)
+            .min(255)
+            .try_into()
+            .unwrap_or(255)
+    };
+    Some(Color::Rgb(lift(r), lift(g), lift(b)))
+}
+
+/// Mean channel luminance for RGB colors (tests / diagnostics).
+#[cfg(test)]
+fn rgb_mean(color: ratatui::style::Color) -> Option<u8> {
+    match color {
+        ratatui::style::Color::Rgb(r, g, b) => {
+            Some(((u16::from(r) + u16::from(g) + u16::from(b)) / 3) as u8)
+        }
+        _ => None,
+    }
+}
+
 /// Available theme variants.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ThemeKind {
@@ -343,12 +389,19 @@ impl Theme {
     /// Clear solid **canvas** backgrounds so the terminal's own background
     /// (including transparency / wallpaper / host ambient) shows through.
     ///
-    /// Dim structural bands are kept so turns and chrome stay scannable:
+    /// Dim structural bands stay painted so turns and chrome remain scannable:
     /// - list selection / hover: `bg_visual`, `bg_hover`, `bg_highlight`
     /// - user-prompt rows + elevated fills: `bg_light`, `bg_dark`
     ///   (`UserPromptBlock` band follows `bg_light`; zeroing it made
     ///   prompt blocks invisible over a transparent canvas)
     /// - code / paste panels: `md_code_bg`, `paste_bg`
+    ///
+    /// Selection / hover / dim bands are also **floor-lifted** so they stay
+    /// visible over host ambient (e.g. suzuri rain). Theme-native values like
+    /// GrokNight `bg_visual` `#363636` are correct on a solid canvas but read
+    /// as "no highlight" over busy underlays; hosts that skip pure-black cells
+    /// for transparency cannot invent a band from bold alone. Never zero these
+    /// tokens to [`Color::Reset`] — that is the recurring regression.
     ///
     /// Diff insert/delete bands still go transparent (whole-line fg mode
     /// via [`Self::diff_uses_line_fg`]).
@@ -356,15 +409,39 @@ impl Theme {
     pub fn with_transparent_canvas(mut self) -> Self {
         use ratatui::style::Color;
         self.bg_base = Color::Reset;
-        // Keep elevated / selection surfaces as dim highlights over the
-        // host underlay (prompt bands, code blocks, list selection).
-        // self.bg_light / bg_dark / bg_highlight / bg_hover / bg_visual
-        // / md_code_bg / paste_bg intentionally unchanged.
         self.bg_terminal = Color::Reset;
         self.scrollbar_bg = Color::Reset;
         // Diff bands: Reset triggers whole-line fg mode via diff_uses_line_fg().
         self.diff_delete_bg = Color::Reset;
         self.diff_insert_bg = Color::Reset;
+
+        // Floor-lift structural bands so rain / wallpaper hosts always paint a
+        // non-default BG (never Reset, never near-black that looks skipped).
+        // Selection must clear a high floor; dim prompt/code can sit lower.
+        self.bg_visual = floor_lift_bg(self.bg_visual, TRANSPARENT_SELECTION_FLOOR)
+            .unwrap_or(Color::Rgb(
+                TRANSPARENT_SELECTION_FLOOR,
+                TRANSPARENT_SELECTION_FLOOR,
+                TRANSPARENT_SELECTION_FLOOR.saturating_add(8),
+            ));
+        self.bg_hover = floor_lift_bg(self.bg_hover, TRANSPARENT_HOVER_FLOOR).unwrap_or(Color::Rgb(
+            TRANSPARENT_HOVER_FLOOR,
+            TRANSPARENT_HOVER_FLOOR,
+            TRANSPARENT_HOVER_FLOOR.saturating_add(6),
+        ));
+        self.bg_highlight =
+            floor_lift_bg(self.bg_highlight, TRANSPARENT_HOVER_FLOOR).unwrap_or(Color::Rgb(
+                TRANSPARENT_HOVER_FLOOR,
+                TRANSPARENT_HOVER_FLOOR,
+                TRANSPARENT_HOVER_FLOOR.saturating_add(6),
+            ));
+        self.bg_light =
+            floor_lift_bg(self.bg_light, TRANSPARENT_DIM_FLOOR).unwrap_or(self.bg_light);
+        self.bg_dark = floor_lift_bg(self.bg_dark, TRANSPARENT_DIM_FLOOR).unwrap_or(self.bg_dark);
+        self.md_code_bg =
+            floor_lift_bg(self.md_code_bg, TRANSPARENT_DIM_FLOOR).unwrap_or(self.md_code_bg);
+        self.paste_bg =
+            floor_lift_bg(self.paste_bg, TRANSPARENT_DIM_FLOOR).unwrap_or(self.paste_bg);
         self
     }
 
@@ -806,26 +883,58 @@ mod tests {
     #[test]
     fn with_transparent_canvas_keeps_selection_and_elevated_bands() {
         // List selection, user-prompt bands (bg_light), and code/paste panels
-        // must stay painted over a transparent host canvas.
+        // must stay painted over a transparent host canvas — never Reset.
+        // Selection/hover are floor-lifted so ambient hosts still see a band.
         use ratatui::style::Color;
         let solid = Theme::groknight();
         let t = solid.with_transparent_canvas();
-        assert_eq!(t.bg_visual, solid.bg_visual);
-        assert_eq!(t.bg_hover, solid.bg_hover);
-        assert_eq!(t.bg_highlight, solid.bg_highlight);
-        assert_eq!(t.bg_light, solid.bg_light);
-        assert_eq!(t.bg_dark, solid.bg_dark);
-        assert_eq!(t.md_code_bg, solid.md_code_bg);
-        assert_eq!(t.paste_bg, solid.paste_bg);
         assert!(!matches!(t.bg_visual, Color::Reset));
+        assert!(!matches!(t.bg_hover, Color::Reset));
+        assert!(!matches!(t.bg_highlight, Color::Reset));
         assert!(!matches!(t.bg_light, Color::Reset));
+        assert!(!matches!(t.bg_dark, Color::Reset));
         assert!(!matches!(t.md_code_bg, Color::Reset));
+        assert!(!matches!(t.paste_bg, Color::Reset));
+        // Regression lock: never re-zero selection for "transparent aesthetics".
+        assert!(
+            rgb_mean(t.bg_visual).is_some_and(|m| m >= TRANSPARENT_SELECTION_FLOOR),
+            "bg_visual mean too dim for rain hosts: {:?}",
+            t.bg_visual
+        );
+        assert!(
+            rgb_mean(t.bg_hover).is_some_and(|m| m >= TRANSPARENT_HOVER_FLOOR),
+            "bg_hover mean too dim: {:?}",
+            t.bg_hover
+        );
+        assert!(
+            rgb_mean(t.bg_light).is_some_and(|m| m >= TRANSPARENT_DIM_FLOOR),
+            "bg_light mean too dim: {:?}",
+            t.bg_light
+        );
+        // Floor-lift only raises; never darkens a theme that was already bright.
+        if let (Some(a), Some(b)) = (rgb_mean(solid.bg_visual), rgb_mean(t.bg_visual)) {
+            assert!(b >= a);
+        }
 
         let tokyo = Theme::tokyonight().with_transparent_canvas();
-        assert_eq!(tokyo.bg_visual, Theme::tokyonight().bg_visual);
-        assert_eq!(tokyo.bg_light, Theme::tokyonight().bg_light);
         assert!(!matches!(tokyo.bg_visual, Color::Reset));
         assert!(!matches!(tokyo.bg_light, Color::Reset));
+        assert!(rgb_mean(tokyo.bg_visual).is_some_and(|m| m >= TRANSPARENT_SELECTION_FLOOR));
+    }
+
+    #[test]
+    fn floor_lift_bg_raises_dim_rgb_and_leaves_bright() {
+        use ratatui::style::Color;
+        assert_eq!(
+            floor_lift_bg(Color::Rgb(54, 54, 54), 96),
+            Some(Color::Rgb(96, 96, 96))
+        );
+        assert_eq!(
+            floor_lift_bg(Color::Rgb(120, 100, 80), 40),
+            Some(Color::Rgb(120, 100, 80))
+        );
+        assert_eq!(floor_lift_bg(Color::Reset, 96), None);
+        assert_eq!(floor_lift_bg(Color::DarkGray, 96), None);
     }
 
     #[test]

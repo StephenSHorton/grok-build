@@ -149,7 +149,7 @@ Prerequisites on each machine: stock Grok + rustup + this clone. That is the pro
 
 | Patch | Notes |
 |-------|--------|
-| Transparent canvas | Default clear canvas for host underlay; keep selection/hover + dim elevated bands (prompt, code, paste). `GROK_SOLID_BG=1` for solid. |
+| Transparent canvas | Default clear canvas for host underlay. **Never** zero `bg_visual` / `bg_hover` / `bg_highlight` / dim elevated bands (`bg_light`, `bg_dark`, `md_code_bg`, `paste_bg`) — that is the recurring “no selection under suzuri rain” bug. Floor-lift selection/hover so bands stay visible over ambient. `GROK_SOLID_BG=1` for solid stock chrome. |
 
 ---
 

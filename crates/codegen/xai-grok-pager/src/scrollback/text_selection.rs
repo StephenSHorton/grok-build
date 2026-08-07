@@ -838,20 +838,32 @@ pub fn reconstruct_table_selection_text(
     }
 }
 
-/// Uniform selection band in the classic inverted colors (`bg_base` on
-/// `text_primary`): styled spans (inline code, links, syntax highlighting)
+/// Uniform selection band in the classic inverted colors (`bg_base` ink on
+/// `text_primary` field): styled spans (inline code, links, syntax highlighting)
 /// join the band instead of inverting to their own colors.
-/// Terminal-native / colorless themes fall back to reverse video.
+///
+/// Transparent-canvas themes zero `bg_base` to `Reset` so the host underlay
+/// shows through. Falling back to reverse video there is fragile under hosts
+/// that skip default-BG fills or re-map reverse (multi-line selections can
+/// paint a solid field with unreadable / missing glyphs on the first line).
+/// Use an explicit dark ink whenever the canvas is transparent.
+/// Terminal-native / colorless themes (band also Reset) still use reverse.
 pub(crate) fn apply_selection_highlight(theme: &Theme, cell: &mut ratatui::buffer::Cell) {
     let band = theme.text_primary;
-    if band == Color::Reset || theme.bg_base == Color::Reset {
+    if band == Color::Reset {
         cell.modifier.insert(Modifier::REVERSED);
         return;
     }
+    // Prefer explicit ink/field. When transparent canvas cleared bg_base,
+    // keep a solid dark ink so the light selection field stays legible.
+    let ink = match theme.bg_base {
+        Color::Reset => Color::Rgb(12, 12, 14),
+        other => other,
+    };
     // A search-match highlight painted earlier in the frame sets REVERSED;
     // left in place it would swap the band right back out.
     cell.modifier.remove(Modifier::REVERSED);
-    cell.set_fg(theme.bg_base);
+    cell.set_fg(ink);
     cell.set_bg(band);
 }
 
@@ -3185,5 +3197,52 @@ mod tests {
         assert_eq!(clip_cols_to_content("", 0..5), 0..0);
         // Wide glyphs count display columns.
         assert_eq!(clip_cols_to_content("│ 名前 │", 1..6), 2..6);
+    }
+
+    #[test]
+    fn selection_highlight_uses_explicit_band_when_canvas_is_transparent() {
+        // Transparent-canvas themes zero bg_base. Selection must still paint a
+        // solid light field + dark ink — not reverse video (hosts that skip
+        // default BG or mishandle reverse hide multi-line selection glyphs).
+        let theme = Theme::groknight().with_transparent_canvas();
+        assert!(
+            matches!(theme.bg_base, Color::Reset),
+            "precondition: transparent canvas clears bg_base"
+        );
+        assert!(
+            !matches!(theme.text_primary, Color::Reset),
+            "precondition: text_primary stays as the selection field"
+        );
+
+        let mut cell = ratatui::buffer::Cell::new("x");
+        cell.set_fg(Color::Rgb(200, 200, 200));
+        cell.set_bg(Color::Reset);
+        cell.modifier.insert(Modifier::REVERSED); // search-match leftover
+        apply_selection_highlight(&theme, &mut cell);
+
+        assert!(
+            !cell.modifier.contains(Modifier::REVERSED),
+            "must clear reverse; use explicit colors"
+        );
+        assert_eq!(
+            cell.bg,
+            theme.text_primary,
+            "selection field is text_primary"
+        );
+        assert_eq!(
+            cell.fg,
+            Color::Rgb(12, 12, 14),
+            "dark ink when bg_base is Reset"
+        );
+    }
+
+    #[test]
+    fn selection_highlight_solid_theme_uses_bg_base_ink() {
+        let theme = Theme::groknight();
+        let mut cell = ratatui::buffer::Cell::new("x");
+        apply_selection_highlight(&theme, &mut cell);
+        assert_eq!(cell.fg, theme.bg_base);
+        assert_eq!(cell.bg, theme.text_primary);
+        assert!(!cell.modifier.contains(Modifier::REVERSED));
     }
 }
