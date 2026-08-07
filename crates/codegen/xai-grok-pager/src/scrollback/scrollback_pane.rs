@@ -283,7 +283,10 @@ impl ScrollbackPane {
         };
 
         let display_cfg = &state.appearance().scrollback.display;
-        let hover_bg = blend_color(theme.bg_base, theme.bg_dark, 0.5).unwrap_or(theme.bg_dark);
+        // blend_base: when transparent canvas zeros bg_base, blend against a
+        // solid stand-in so hover stays strictly dimmer than selection (bg_dark).
+        let hover_bg = blend_color(crate::theme::blend_base(theme), theme.bg_dark, 0.5)
+            .unwrap_or(theme.bg_dark);
         let bg_style = Style::default().bg(hover_bg);
 
         // Inset the hover bg by 1 column on each side unless the appearance
