@@ -13930,6 +13930,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "xai-grok-session-events"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "uuid",
+ "xai-grok-config",
+]
+
+[[package]]
 name = "xai-grok-shared"
 version = "0.0.0"
 dependencies = [
@@ -14079,6 +14092,7 @@ dependencies = [
  "xai-grok-sampler",
  "xai-grok-sampling-types",
  "xai-grok-sandbox",
+ "xai-grok-session-events",
  "xai-grok-shared",
  "xai-grok-shell-base",
  "xai-grok-shell-session-support",
@@ -14326,6 +14340,7 @@ dependencies = [
  "xai-grok-env",
  "xai-grok-extra-ca",
  "xai-grok-sandbox",
+ "xai-grok-session-events",
  "xai-grok-test-support",
  "xai-grok-tools-api",
  "xai-grok-version",
