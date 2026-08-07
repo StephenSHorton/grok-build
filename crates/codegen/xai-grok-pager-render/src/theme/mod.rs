@@ -30,11 +30,12 @@ pub use tokyonight::{Theme, pulse_brightness, wave_brightness};
 /// transparent (`Color::Reset`) so the terminal's own background shows.
 ///
 /// The **app canvas** (`bg_base`, `bg_terminal`, scrollbar track) is cleared.
-/// Structural dim bands stay painted so content remains scannable over a
-/// host underlay (e.g. suzuri rain):
-/// - list selection / hover (`bg_visual`, `bg_hover`, `bg_highlight`)
-/// - user-prompt + elevated surfaces (`bg_light`, `bg_dark`)
-/// - code / paste panels (`md_code_bg`, `paste_bg`)
+/// Structural bands stay at **theme-native RGB** so hierarchy is preserved:
+/// - sunken chips: `paste_bg` (darker than canvas)
+/// - elevated panels / code: `bg_dark`, `md_code_bg`
+/// - user-prompt / idle rows: `bg_light`
+/// - list selection / hover: `bg_visual`, `bg_hover`, `bg_highlight`
+///   (floor-lifted so they remain visible over host ambient)
 ///
 /// Default **on** in this local fork. Set `GROK_SOLID_BG=1` (or `true`/`yes`)
 /// to restore stock solid theme backgrounds.
@@ -53,11 +54,13 @@ pub fn transparent_canvas_enabled() -> bool {
 /// Theme-native GrokNight `#363636` (mean 54) is correct on solid chrome but
 /// washes out over ambient rain — hosts skip pure-black cells and will not
 /// invent a band from bold alone.
+///
+/// Only selection/hover use absolute floors. Dim structural tokens
+/// (`paste_bg`, `bg_dark`, `bg_light`, `md_code_bg`) keep solid theme RGB so
+/// multi-tone hierarchy (sunken chip vs elevated panel vs prompt band) survives.
 const TRANSPARENT_SELECTION_FLOOR: u8 = 96;
 /// Hover / highlight band floor (slightly under selection).
 const TRANSPARENT_HOVER_FLOOR: u8 = 80;
-/// Dim prompt / code / paste elevated surfaces.
-const TRANSPARENT_DIM_FLOOR: u8 = 48;
 
 /// Raise an RGB background to at least `min_mean` mean channel, or return
 /// `None` if the color is not RGB (named/indexed/Reset — caller decides).
@@ -92,6 +95,17 @@ fn rgb_mean(color: ratatui::style::Color) -> Option<u8> {
             Some(((u16::from(r) + u16::from(g) + u16::from(b)) / 3) as u8)
         }
         _ => None,
+    }
+}
+
+/// Solid canvas stand-in when `bg_base` is `Reset` (transparent canvas).
+/// Used for blends that need an RGB underlay (hover mid-tones, dimmed accents).
+#[must_use]
+pub fn blend_base(theme: &Theme) -> ratatui::style::Color {
+    use ratatui::style::Color;
+    match theme.bg_base {
+        Color::Reset => Color::Rgb(20, 20, 20), // GrokNight solid canvas
+        other => other,
     }
 }
 
@@ -389,19 +403,19 @@ impl Theme {
     /// Clear solid **canvas** backgrounds so the terminal's own background
     /// (including transparency / wallpaper / host ambient) shows through.
     ///
-    /// Dim structural bands stay painted so turns and chrome remain scannable:
-    /// - list selection / hover: `bg_visual`, `bg_hover`, `bg_highlight`
-    /// - user-prompt rows + elevated fills: `bg_light`, `bg_dark`
-    ///   (`UserPromptBlock` band follows `bg_light`; zeroing it made
-    ///   prompt blocks invisible over a transparent canvas)
-    /// - code / paste panels: `md_code_bg`, `paste_bg`
+    /// Structural bands stay painted at **theme-native RGB** so multi-tone
+    /// hierarchy is preserved over the host underlay:
+    /// - sunken chips: `paste_bg` (e.g. `[Image #N]` brackets + fill)
+    /// - elevated panels / code: `bg_dark`, `md_code_bg`
+    /// - user-prompt / idle rows: `bg_light`
     ///
-    /// Selection / hover / dim bands are also **floor-lifted** so they stay
-    /// visible over host ambient (e.g. suzuri rain). Theme-native values like
-    /// GrokNight `bg_visual` `#363636` are correct on a solid canvas but read
-    /// as "no highlight" over busy underlays; hosts that skip pure-black cells
-    /// for transparency cannot invent a band from bold alone. Never zero these
-    /// tokens to [`Color::Reset`] — that is the recurring regression.
+    /// List **selection / hover** are floor-lifted so they stay visible over
+    /// busy ambient (suzuri rain). Never zero those tokens to [`Color::Reset`]
+    /// — that is the recurring “no selection under rain” regression.
+    ///
+    /// Do **not** absolute-floor dim structural tokens to one shared mid-gray:
+    /// that collapses paste chips, code blocks, and prompt bands into the same
+    /// slab and erases the solid-theme hierarchy.
     ///
     /// Diff insert/delete bands still go transparent (whole-line fg mode
     /// via [`Self::diff_uses_line_fg`]).
@@ -415,9 +429,8 @@ impl Theme {
         self.diff_delete_bg = Color::Reset;
         self.diff_insert_bg = Color::Reset;
 
-        // Floor-lift structural bands so rain / wallpaper hosts always paint a
-        // non-default BG (never Reset, never near-black that looks skipped).
-        // Selection must clear a high floor; dim prompt/code can sit lower.
+        // Selection / hover only — keep dim structure at solid theme RGB.
+        // self.bg_light / bg_dark / md_code_bg / paste_bg intentionally unchanged.
         self.bg_visual = floor_lift_bg(self.bg_visual, TRANSPARENT_SELECTION_FLOOR)
             .unwrap_or(Color::Rgb(
                 TRANSPARENT_SELECTION_FLOOR,
@@ -435,13 +448,6 @@ impl Theme {
                 TRANSPARENT_HOVER_FLOOR,
                 TRANSPARENT_HOVER_FLOOR.saturating_add(6),
             ));
-        self.bg_light =
-            floor_lift_bg(self.bg_light, TRANSPARENT_DIM_FLOOR).unwrap_or(self.bg_light);
-        self.bg_dark = floor_lift_bg(self.bg_dark, TRANSPARENT_DIM_FLOOR).unwrap_or(self.bg_dark);
-        self.md_code_bg =
-            floor_lift_bg(self.md_code_bg, TRANSPARENT_DIM_FLOOR).unwrap_or(self.md_code_bg);
-        self.paste_bg =
-            floor_lift_bg(self.paste_bg, TRANSPARENT_DIM_FLOOR).unwrap_or(self.paste_bg);
         self
     }
 
@@ -882,9 +888,8 @@ mod tests {
 
     #[test]
     fn with_transparent_canvas_keeps_selection_and_elevated_bands() {
-        // List selection, user-prompt bands (bg_light), and code/paste panels
-        // must stay painted over a transparent host canvas — never Reset.
-        // Selection/hover are floor-lifted so ambient hosts still see a band.
+        // List selection is floor-lifted; dim structural bands keep solid RGB
+        // so paste chips / code / prompt hierarchy is not collapsed.
         use ratatui::style::Color;
         let solid = Theme::groknight();
         let t = solid.with_transparent_canvas();
@@ -895,7 +900,7 @@ mod tests {
         assert!(!matches!(t.bg_dark, Color::Reset));
         assert!(!matches!(t.md_code_bg, Color::Reset));
         assert!(!matches!(t.paste_bg, Color::Reset));
-        // Regression lock: never re-zero selection for "transparent aesthetics".
+        // Selection/hover floors for rain hosts.
         assert!(
             rgb_mean(t.bg_visual).is_some_and(|m| m >= TRANSPARENT_SELECTION_FLOOR),
             "bg_visual mean too dim for rain hosts: {:?}",
@@ -906,11 +911,21 @@ mod tests {
             "bg_hover mean too dim: {:?}",
             t.bg_hover
         );
-        assert!(
-            rgb_mean(t.bg_light).is_some_and(|m| m >= TRANSPARENT_DIM_FLOOR),
-            "bg_light mean too dim: {:?}",
-            t.bg_light
-        );
+        // Dim structure: solid theme values unchanged (no shared mid-gray floor).
+        assert_eq!(t.bg_light, solid.bg_light);
+        assert_eq!(t.bg_dark, solid.bg_dark);
+        assert_eq!(t.md_code_bg, solid.md_code_bg);
+        assert_eq!(t.paste_bg, solid.paste_bg);
+        // Hierarchy: sunken paste chip darker than elevated code/prompt bands.
+        let paste = rgb_mean(t.paste_bg).expect("paste_bg rgb");
+        let dark = rgb_mean(t.bg_dark).expect("bg_dark rgb");
+        let light = rgb_mean(t.bg_light).expect("bg_light rgb");
+        let hover = rgb_mean(t.bg_hover).expect("bg_hover rgb");
+        let visual = rgb_mean(t.bg_visual).expect("bg_visual rgb");
+        assert!(paste < dark || paste < light, "paste chip must stay sunken");
+        assert!(dark <= light);
+        assert!(light < hover);
+        assert!(hover < visual);
         // Floor-lift only raises; never darkens a theme that was already bright.
         if let (Some(a), Some(b)) = (rgb_mean(solid.bg_visual), rgb_mean(t.bg_visual)) {
             assert!(b >= a);
@@ -918,8 +933,19 @@ mod tests {
 
         let tokyo = Theme::tokyonight().with_transparent_canvas();
         assert!(!matches!(tokyo.bg_visual, Color::Reset));
-        assert!(!matches!(tokyo.bg_light, Color::Reset));
+        assert_eq!(tokyo.bg_light, Theme::tokyonight().bg_light);
+        assert_eq!(tokyo.paste_bg, Theme::tokyonight().paste_bg);
         assert!(rgb_mean(tokyo.bg_visual).is_some_and(|m| m >= TRANSPARENT_SELECTION_FLOOR));
+    }
+
+    #[test]
+    fn blend_base_substitutes_when_canvas_is_transparent() {
+        use ratatui::style::Color;
+        let solid = Theme::groknight();
+        assert_eq!(blend_base(&solid), solid.bg_base);
+        let t = solid.with_transparent_canvas();
+        assert!(matches!(t.bg_base, Color::Reset));
+        assert_eq!(blend_base(&t), Color::Rgb(20, 20, 20));
     }
 
     #[test]
