@@ -714,6 +714,15 @@ impl AgentBuilder {
             )));
         }
         if definition.inject_default_tools {
+            // Session events: always available (filesystem queue under ~/.grok/events).
+            {
+                use xai_grok_tools::implementations::session_events::{
+                    SessionEventsDrainImpl, SessionEventsEnqueueImpl, SessionEventsListImpl,
+                };
+                tool_config.tools.push((&SessionEventsListImpl).into());
+                tool_config.tools.push((&SessionEventsDrainImpl).into());
+                tool_config.tools.push((&SessionEventsEnqueueImpl).into());
+            }
             if self.memory_backend.is_some() {
                 use xai_grok_tools::implementations::memory;
                 tool_config

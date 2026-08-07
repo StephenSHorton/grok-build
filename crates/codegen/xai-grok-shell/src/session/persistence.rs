@@ -3108,6 +3108,8 @@ pub async fn delete_session_history(
     };
 
     let Some(info) = local_info else {
+        // Still drop event queue for this id (no durable session to resume).
+        let _ = xai_grok_session_events::delete_session_events(session_id);
         return Ok(SessionDeletion {
             local_removed: false,
             remote_removed,
@@ -3122,6 +3124,9 @@ pub async fn delete_session_history(
     // Evict from the search index: the indexer re-reads the (now
     // missing) summary and drops the document.
     crate::session::storage::search::notify_session_updated(&info.id.to_string(), &info.cwd);
+
+    // Permanent delete: wipe per-session event queue under ~/.grok/events.
+    let _ = xai_grok_session_events::delete_session_events(session_id);
 
     Ok(SessionDeletion {
         local_removed: true,
