@@ -726,6 +726,11 @@ impl ToolRegistryBuilder {
         b.register::<opencode::OpenCodeSkillTool>();
         b.register::<crate::implementations::memory::search_tool::MemorySearchImpl>();
         b.register::<crate::implementations::memory::get_tool::MemoryGetImpl>();
+        // Session events (filesystem queue under ~/.grok/events/) — must be in
+        // the registry if agent builder injects them into tool_config.
+        b.register::<crate::implementations::session_events::SessionEventsListImpl>();
+        b.register::<crate::implementations::session_events::SessionEventsDrainImpl>();
+        b.register::<crate::implementations::session_events::SessionEventsEnqueueImpl>();
         b.register::<crate::implementations::search_tool::SearchTool>();
         b.register_with_params::<
                 crate::implementations::use_tool::UseTool,

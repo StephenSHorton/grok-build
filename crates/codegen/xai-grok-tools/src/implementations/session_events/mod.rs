@@ -2,7 +2,7 @@
 //! `~/.grok/events/`. App-agnostic; producers write the same JSON files.
 
 mod tools;
-mod types;
+pub mod types;
 
 pub use tools::{
     SessionEventsDrainImpl, SessionEventsEnqueueImpl, SessionEventsListImpl,
