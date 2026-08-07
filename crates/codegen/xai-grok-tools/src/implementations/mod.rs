@@ -6,7 +6,6 @@ pub mod grok_build_concise;
 pub mod grok_build_hashline;
 pub mod lsp;
 pub mod memory;
-pub mod session_events;
 pub mod opencode;
 pub mod read_file;
 pub mod search_tool;
@@ -21,9 +20,6 @@ pub use grok_build::{
     WaitTasksTool, WebFetchTool, WebSearchTool,
 };
 pub use memory::{MemoryGetImpl, MemorySearchImpl};
-pub use session_events::{
-    SessionEventsDrainImpl, SessionEventsEnqueueImpl, SessionEventsListImpl,
-};
 pub use opencode::{
     OpenCodeBashTool, OpenCodeEditTool, OpenCodeGlobTool, OpenCodeGrepTool, OpenCodeReadTool,
     OpenCodeSkillTool, OpenCodeTodoWriteTool, OpenCodeWriteTool,

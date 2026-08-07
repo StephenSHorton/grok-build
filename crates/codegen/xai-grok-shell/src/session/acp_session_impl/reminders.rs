@@ -533,29 +533,6 @@ impl SessionActor {
         self.push_system_reminder(INTERRUPT_REMINDER);
         tracing::debug!("Injected prior-turn interrupt reminder");
     }
-
-    /// Batch-drain `~/.grok/events/by-session/<id>/` into one system-reminder
-    /// and clear the queue. Soft inject only (no hard wake). App-agnostic.
-    pub(super) async fn maybe_inject_session_events(&self) {
-        let sid = self.session_id_string();
-        let events = match xai_grok_session_events::drain_session(&sid) {
-            Ok(e) => e,
-            Err(e) => {
-                tracing::debug!(error = %e, session_id = %sid, "session events drain failed");
-                return;
-            }
-        };
-        if events.is_empty() {
-            return;
-        }
-        let body = xai_grok_session_events::format_events_reminder(&events);
-        self.push_system_reminder(&body);
-        tracing::info!(
-            session_id = %sid,
-            count = events.len(),
-            "Drained session events into turn"
-        );
-    }
     /// Push a `<system-reminder>`-wrapped user message into the conversation.
     pub(super) fn push_system_reminder(&self, content: &str) {
         self.push_system_reminder_with_tag(content, "system-reminder");
