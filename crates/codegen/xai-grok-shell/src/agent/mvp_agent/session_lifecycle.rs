@@ -175,6 +175,9 @@ impl MvpAgent {
         if let Some(ops) = self.workspace_ops.borrow().as_ref() {
             ops.end_local_session(id.0.as_ref());
         }
+        // Note: do NOT wipe ~/.grok/events here — remove_session keeps the
+        // conversation resumable. Permanent /delete paths should call
+        // xai_grok_session_events::delete_session_events when history is wiped.
         self.log_resource_usage(xai_grok_telemetry::events::ResourceReportTrigger::SessionClose);
     }
     /// Per-session prompt-intake lock: prompts land in submission order and a

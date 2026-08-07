@@ -690,6 +690,8 @@ impl SessionActor {
         self.maybe_inject_mcp_reminder().await;
         self.maybe_inject_mcp_connecting_reminder().await;
         self.maybe_inject_date_rollover_reminder().await;
+        // Soft inject: drain app-agnostic ~/.grok/events for this session.
+        self.maybe_inject_session_events().await;
         self.inject_plan_mode_reminders().await;
         self.inject_resumed_tasks_reminder();
         if matches!(&origin, super::super::PromptOrigin::User) {

@@ -1,0 +1,20 @@
+[package]
+license = "Apache-2.0"
+edition.workspace = true
+name = "xai-grok-session-events"
+version = "0.1.0"
+description = "Filesystem session event queue under ~/.grok/events (enqueue, batch drain, GC)"
+
+[dependencies]
+chrono = { workspace = true, features = ["serde", "clock"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+uuid = { version = "1", features = ["serde", "v4", "v7"] }
+xai-grok-config = { path = "../../codegen/xai-grok-config" }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[lints]
+workspace = true
