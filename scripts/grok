@@ -86,23 +86,51 @@ write_status() {
   } >"$STATUS_FILE" 2>/dev/null || true
 }
 
-# Short lock wait — never block launch for 10 minutes.
+# Short lock wait — never block launch for minutes. Recover stale locks
+# left behind when a previous launcher was killed (SIGKILL / crash) so we
+# don't sit silent for 15s every subsequent start.
+_lock_holder_alive() {
+  local pid=""
+  [[ -f "$LOCK_DIR/pid" ]] || return 1
+  pid=$(cat "$LOCK_DIR/pid" 2>/dev/null || true)
+  [[ -n "$pid" ]] || return 1
+  kill -0 "$pid" 2>/dev/null
+}
+
+_clear_lock() {
+  rm -rf "$LOCK_DIR" 2>/dev/null || true
+}
+
 acquire_lock() {
   local waited=0
   while ! mkdir "$LOCK_DIR" 2>/dev/null; do
+    if ! _lock_holder_alive; then
+      log "removing stale launch lock (no live holder)"
+      _clear_lock
+      continue
+    fi
+    if [[ $waited -eq 0 ]]; then
+      local holder
+      holder=$(cat "$LOCK_DIR/pid" 2>/dev/null || echo "?")
+      log "waiting for another launch (pid $holder) to finish sync …"
+    elif [[ $((waited % 5)) -eq 0 ]]; then
+      log "still waiting for launch lock (${waited}s) …"
+    fi
     if [[ $waited -ge 15 ]]; then
-      log "another launch is syncing — skipping sync this time"
+      log "another launch is still syncing — skipping sync this time"
       return 1
     fi
     sleep 1
     waited=$((waited + 1))
   done
-  trap 'rmdir "$LOCK_DIR" 2>/dev/null || true' EXIT
+  # Record holder so other launches can detect live vs stale.
+  printf '%s\n' "$$" >"$LOCK_DIR/pid" 2>/dev/null || true
+  trap '_clear_lock' EXIT
   return 0
 }
 
 release_lock() {
-  rmdir "$LOCK_DIR" 2>/dev/null || true
+  _clear_lock
   trap - EXIT
 }
 
@@ -323,6 +351,8 @@ launch() {
 }
 
 main() {
+  log "launching from $REPO"
+
   if [[ ! -d "$REPO/.git" ]]; then
     log "warning: not a git repo at $REPO — launching binary only"
     launch "$@"
@@ -342,8 +372,11 @@ main() {
       rebuild_if_needed || true
       release_lock
     fi
+  else
+    log "sync+rebuild skipped (GROK_SKIP_SYNC / GROK_SKIP_REBUILD)"
   fi
 
+  log "exec $BIN"
   launch "$@"
 }
 
