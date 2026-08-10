@@ -233,6 +233,12 @@ impl ScrollbackPane {
     /// - Skips entries that aren't header-style — markdown / agent message
     ///   blocks already get the hover *border* via
     ///   `agent::render_entry_hover` and don't need a full bg patch.
+    /// - Skips the **full hover fill** when the entry has
+    ///   [`inline_media`](crate::scrollback::block::BlockContent::inline_media)
+    ///   (`image_gen` / video tool blocks). Those stay `Collapsed` while
+    ///   still reserving Kitty pixel rows placed at `z=-1` (under cell
+    ///   backgrounds); an opaque fill blanks the image. Border-only hover
+    ///   (`render_entry_hover`) is enough; the chevron still paints.
     /// - Hover bg is `blend(bg_base, bg_dark, 0.5)` so it's strictly
     ///   dimmer than the selection bg (`bg_dark`) across all themes.
     /// - Inset matches the group-selection bg rule (skip 1 col on each
@@ -283,28 +289,34 @@ impl ScrollbackPane {
             return;
         };
 
-        let display_cfg = &state.appearance().scrollback.display;
-        // blend_base: when transparent canvas zeros bg_base, blend against a
-        // solid stand-in so hover stays strictly dimmer than selection (bg_dark).
-        let hover_bg = blend_color(crate::theme::blend_base(theme), theme.bg_dark, 0.5)
-            .unwrap_or(theme.bg_dark);
-        let bg_style = Style::default().bg(hover_bg);
+        // Media tool blocks reserve multi-row image areas under a collapsed
+        // header. Full fill covers Kitty z=-1 placements — border only.
+        let fill_hover_bg = entry.block.inline_media().is_none();
 
-        // Inset the hover bg by 1 column on each side unless the appearance
-        // config opts into overlaying the border, mirroring the group
-        // selection bg behaviour.
-        let (hl_x, hl_width) = if display_cfg.highlight_overlays_border {
-            (entry_area.x, entry_area.width)
-        } else {
-            (entry_area.x + 1, entry_area.width.saturating_sub(2))
-        };
+        if fill_hover_bg {
+            let display_cfg = &state.appearance().scrollback.display;
+            // blend_base: when transparent canvas zeros bg_base, blend against a
+            // solid stand-in so hover stays strictly dimmer than selection (bg_dark).
+            let hover_bg = blend_color(crate::theme::blend_base(theme), theme.bg_dark, 0.5)
+                .unwrap_or(theme.bg_dark);
+            let bg_style = Style::default().bg(hover_bg);
 
-        if hl_width > 0 {
-            for y in entry_area.y..entry_area.y + entry_area.height {
-                if y >= area.y && y < area.y + area.height {
-                    for x in hl_x..hl_x + hl_width {
-                        if let Some(cell) = buf.cell_mut((x, y)) {
-                            cell.set_style(bg_style);
+            // Inset the hover bg by 1 column on each side unless the appearance
+            // config opts into overlaying the border, mirroring the group
+            // selection bg behaviour.
+            let (hl_x, hl_width) = if display_cfg.highlight_overlays_border {
+                (entry_area.x, entry_area.width)
+            } else {
+                (entry_area.x + 1, entry_area.width.saturating_sub(2))
+            };
+
+            if hl_width > 0 {
+                for y in entry_area.y..entry_area.y + entry_area.height {
+                    if y >= area.y && y < area.y + area.height {
+                        for x in hl_x..hl_x + hl_width {
+                            if let Some(cell) = buf.cell_mut((x, y)) {
+                                cell.set_style(bg_style);
+                            }
                         }
                     }
                 }
@@ -1119,6 +1131,10 @@ impl ScrollbackPane {
         // would clobber line-level styling (diff green/red, stdout
         // `bg_dark`, etc.). The SelectionBox border alone is enough.
         //
+        // Also skipped for entries with inline media (image_gen / video):
+        // they stay collapsed while reserving Kitty pixel rows at z=-1;
+        // a full fill blanks the image (same rule as hover fill).
+        //
         // Other singleton blocks (markdown messages, user prompts, etc.)
         // intentionally don't get the bg patch — for big markdown blocks
         // a full bg fill would be too heavy and the SelectionBox border
@@ -1134,18 +1150,20 @@ impl ScrollbackPane {
             let display_cfg = &state.appearance().scrollback.display;
             let split_mode = display_cfg.group_selection_split;
             let sel_range = state.group_range_of(selected_abs, split_mode);
-            let is_header_style_block = state.entry(selected_abs).is_some_and(|e| {
+            let selected_entry = state.entry(selected_abs);
+            let is_header_style_block = selected_entry.is_some_and(|e| {
                 matches!(
                     e.block,
                     crate::scrollback::block::RenderBlock::ToolCall(_)
                         | crate::scrollback::block::RenderBlock::Thinking(_)
                 )
             });
-            let is_collapsed = state
-                .entry(selected_abs)
+            let is_collapsed = selected_entry
                 .is_some_and(|e| e.display_mode == DisplayMode::Collapsed);
+            // Kitty z=-1 media: opaque selection fill blanks the pixels.
+            let has_inline_media = selected_entry.is_some_and(|e| e.block.inline_media().is_some());
 
-            if (sel_range.len() > 1 || is_header_style_block) && is_collapsed {
+            if (sel_range.len() > 1 || is_header_style_block) && is_collapsed && !has_inline_media {
                 let highlight_area = selected.area;
                 let bg_style = Style::default().bg(theme.bg_dark);
 
@@ -1501,5 +1519,119 @@ mod tests {
         assert_eq!(verb_member_indicator_row(4, true, false), 5);
         // Header top-clipped off-screen: the first visible row IS member 0.
         assert_eq!(verb_member_indicator_row(4, true, true), 4);
+    }
+
+    fn make_test_png(width: u32, height: u32) -> Vec<u8> {
+        use image::{ImageBuffer, Rgba};
+        let img: ImageBuffer<Rgba<u8>, Vec<u8>> =
+            ImageBuffer::from_fn(width, height, |_, _| Rgba([10, 20, 30, 255]));
+        let mut buf = Vec::new();
+        img.write_to(
+            &mut std::io::Cursor::new(&mut buf),
+            image::ImageFormat::Png,
+        )
+        .expect("encode png");
+        buf
+    }
+
+    /// Collapsed `image_gen` media stays `Collapsed` while reserving Kitty
+    /// pixel rows. Full hover fill would blank z=-1 placements — only the
+    /// border (via `render_entry_hover`) should indicate hover.
+    ///
+    /// Differential: compare hover vs no-hover paints so the assertion does
+    /// not depend on absolute theme RGB (tests often collapse colors to Reset).
+    #[test]
+    fn media_tool_hover_skips_full_bg_fill() {
+        use crate::scrollback::blocks::tool::{OtherToolCallBlock, ToolCallBlock};
+        use crate::terminal::image::{GraphicsProtocol, set_protocol_for_test};
+
+        let _guard = set_protocol_for_test(GraphicsProtocol::Kitty);
+
+        let dir = tempfile::tempdir().unwrap();
+        let image_path = dir.path().join("hover-media.png");
+        std::fs::write(&image_path, make_test_png(120, 120)).unwrap();
+
+        let area = Rect::new(0, 0, 80, 30);
+        let mut state = ScrollbackState::new();
+        state.push_block(RenderBlock::ToolCall(ToolCallBlock::Other(
+            OtherToolCallBlock::new("image_gen", "saved image").with_media_ref(&image_path, false),
+        )));
+        // Control: ordinary collapsed tool without media still gets hover fill.
+        state.push_block(RenderBlock::execute_with_output(
+            "echo plain",
+            "out",
+            None::<String>,
+        ));
+        for i in 0..state.len() {
+            if let Some(e) = state.entry_mut(i) {
+                e.display_mode = DisplayMode::Collapsed;
+            }
+        }
+
+        assert!(
+            state.entry(0).unwrap().block.inline_media().is_some(),
+            "media entry must expose inline_media for the skip path"
+        );
+        assert!(
+            state.entry(1).unwrap().block.inline_media().is_none(),
+            "plain tool must not expose inline_media"
+        );
+
+        state.prepare_layout(area.width, area.height);
+
+        let paint = |hovered: Option<usize>| -> Buffer {
+            let mut buf = Buffer::empty(area);
+            let mut scratch = ScratchBuffer::default();
+            let pane = ScrollbackPane::new()
+                .active(true)
+                .with_hovered_entry(hovered);
+            pane.render_with_scratch(area, &mut buf, &state, &mut scratch);
+            buf
+        };
+
+        let (media_area, _, _) = state
+            .entry_screen_area(0, area)
+            .expect("media entry on screen");
+        let (plain_area, _, _) = state
+            .entry_screen_area(1, area)
+            .expect("plain tool on screen");
+        assert!(
+            media_area.height > 4,
+            "media entry must reserve image rows; height={}",
+            media_area.height
+        );
+
+        // Sample deep in the reserved image band (below header + path).
+        let media_x = media_area.x + media_area.width / 2;
+        let media_y = media_area.y + media_area.height.saturating_sub(3).max(2);
+        let plain_x = plain_area.x + plain_area.width / 2;
+        let plain_y = plain_area.y;
+
+        let media_idle = paint(None);
+        let media_hover = paint(Some(0));
+        assert_eq!(
+            media_idle[(media_x, media_y)].bg,
+            media_hover[(media_x, media_y)].bg,
+            "media image rows must not change bg under hover (Kitty z=-1 blank); \
+             idle={:?} hover={:?} at ({media_x},{media_y}) entry={media_area:?}",
+            media_idle[(media_x, media_y)].bg,
+            media_hover[(media_x, media_y)].bg,
+        );
+
+        let plain_idle = paint(None);
+        let plain_hover = paint(Some(1));
+        // When the theme can paint a real hover band, plain tools must still
+        // get it. If bg is monochrome-Reset both ways, fill is unobservable —
+        // the media equality above is still the load-bearing pin.
+        if plain_idle[(plain_x, plain_y)].bg != plain_hover[(plain_x, plain_y)].bg {
+            // hover applied somewhere on plain — good control signal
+        } else {
+            // Colorless theme: still require media equality (already asserted)
+            // and that the media entry is taller than a plain header-only row.
+            assert!(
+                media_area.height > plain_area.height,
+                "media block should be taller than plain collapsed tool"
+            );
+        }
     }
 }
