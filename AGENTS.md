@@ -21,7 +21,7 @@ This checkout is **Stephen’s personal fork** of [`xai-org/grok-build`](https:/
 ## What every open of `grok` does
 
 **Intentional model: local git + local `cargo`.** Rust on each machine is fine and expected.
-Every launch re-checks remotes and rebuilds only when the tree actually moved — that is how
+Every launch re-checks remotes and rebuilds only when rust/build inputs moved — that is how
 we stay on latest (origin patches and upstream monorepo syncs), not via GitHub Release downloads.
 
 One pass, **at most one rebuild**:
@@ -30,7 +30,7 @@ One pass, **at most one rebuild**:
 2. `git fetch upstream` (`xai-org/grok-build`)
 3. Fast-forward onto origin when behind (no auto-push; no auto-merge if diverged)
 4. Rebase onto `upstream/main` when upstream moved
-5. `cargo build --release` only if `HEAD` changed (or binary missing)
+5. `cargo build --release` only if rust/build inputs changed (or binary missing). Script/docs-only commits skip cargo (Windows cannot overwrite a running `.exe`).
 6. Exec the binary (`xai-grok-pager` / `.exe`)
 
 Escape hatch (always stock): `grok-official` (Unix) / `grok-official.cmd` (Windows).
@@ -137,7 +137,7 @@ git remote add upstream https://github.com/xai-org/grok-build.git   # once
 We deliberately do **not** ship fork binaries via GitHub Actions the way suzuri does app releases.
 
 - Opening `grok` already **fetches origin + upstream** and rebases when needed → source is current.
-- Rebuild runs **only if `HEAD` moved** → you get the latest code without a release train or download channel.
+- Rebuild runs **only if rust/build inputs changed** → you get the latest code without a release train or download channel. Script/docs-only commits skip cargo so a running Windows `.exe` is not overwritten.
 - Same loop on every OS that has Rust; no “which release asset matches this SHA” machinery.
 - Stock Grok still has its own install channel (`grok-official`); the fork stays a thin launcher over a local tree.
 

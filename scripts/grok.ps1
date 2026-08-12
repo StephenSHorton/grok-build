@@ -8,7 +8,7 @@
     1. git fetch origin (your GitHub fork)
     2. git fetch upstream (xai-org/grok-build)
     3. fast-forward onto origin when behind; rebase onto upstream when moved
-    4. rebuild release binary only when HEAD changed (or binary missing)
+    4. rebuild release binary only when rust sources changed (or binary missing)
     5. install into ~/.grok/bin (replacing stock) when the binary changes
     6. exec the fork binary with all args
 
@@ -115,12 +115,60 @@ function Release-Lock {
     Clear-Lock
 }
 
-function Test-NeedRebuild {
-    if (-not (Test-Path $Bin)) { return $true }
-    if (-not (Test-Path $Stamp)) { return $true }
+function Test-PathRequiresRustRebuild([string]$RelPath) {
+    $n = $RelPath -replace '\\', '/'
+    if ($n -match '^(scripts/|\.github/)') { return $false }
+    if ($n -match '\.(md|txt)$') { return $false }
+    if ($n -match '^(LICENSE|SOURCE_REV|\.gitignore|\.gitattributes)$') { return $false }
+    return $true
+}
+
+function Get-StampSha {
+    if (-not (Test-Path -LiteralPath $Stamp)) { return '' }
+    $built = (Get-Content -LiteralPath $Stamp -Raw -ErrorAction SilentlyContinue)
+    if (-not $built) { return '' }
+    return $built.Trim()
+}
+
+function Write-BuildStamp {
     $head = (& git -C $Repo rev-parse HEAD).Trim()
-    $built = (Get-Content -LiteralPath $Stamp -Raw -ErrorAction SilentlyContinue).Trim()
-    return ($head -ne $built)
+    Set-Content -LiteralPath $Stamp -Value $head -NoNewline
+}
+
+# Cargo rebuild if the binary is missing or rust/build inputs changed since stamp.
+# Script/docs-only commits refresh the stamp and skip cargo (this session often
+# has the .exe locked, and cargo cannot overwrite a running Windows image).
+function Test-NeedRebuild {
+    if (-not (Test-Path -LiteralPath $Bin)) { return $true }
+    $built = Get-StampSha
+    if (-not $built) { return $true }
+    $head = (& git -C $Repo rev-parse HEAD).Trim()
+    if ($head -eq $built) { return $false }
+
+    $spec = $built + '^{commit}'
+    & git -C $Repo cat-file -e $spec 2>$null | Out-Null
+    if ($LASTEXITCODE -ne 0) { return $true }
+
+    $files = @(& git -C $Repo diff --name-only $built HEAD)
+    if (-not $files -or $files.Count -eq 0) { return $false }
+    foreach ($f in $files) {
+        if (Test-PathRequiresRustRebuild $f) { return $true }
+    }
+    return $false
+}
+
+function Move-ReleaseBinaryAside {
+    if (-not (Test-Path -LiteralPath $Bin)) { return $null }
+    $aside = "$Bin.prev"
+    Remove-Item -LiteralPath $aside -Force -ErrorAction SilentlyContinue
+    try {
+        Move-Item -LiteralPath $Bin -Destination $aside -Force -ErrorAction Stop
+        Write-ForkLog 'moved in-use binary aside so cargo can replace it'
+        return $aside
+    } catch {
+        Write-ForkLog "warning: could not move existing binary: $_"
+        return $null
+    }
 }
 
 function Integrate-Origin {
@@ -251,7 +299,14 @@ function Sync-Remotes {
 
 function Rebuild-IfNeeded {
     if (-not (Test-NeedRebuild)) {
-        Write-ForkLog 'binary current'
+        $built = Get-StampSha
+        $head = (& git -C $Repo rev-parse HEAD).Trim()
+        if ($head -ne $built) {
+            Write-BuildStamp
+            Write-ForkLog 'binary current (no rust changes since last build)'
+        } else {
+            Write-ForkLog 'binary current'
+        }
         return
     }
     if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
@@ -264,14 +319,23 @@ function Rebuild-IfNeeded {
         Write-ForkLog 'warning: PROTOC not set; ensure protoc is available (see AGENTS.md)'
     }
 
-    Write-ForkLog 'building release binary once (HEAD moved or binary missing) ...'
+    Write-ForkLog 'building release binary once (rust inputs changed or binary missing) ...'
     Push-Location $Repo
+    $aside = $null
     try {
+        $aside = Move-ReleaseBinaryAside
         & cargo build -p xai-grok-pager-bin --release
-        if ($LASTEXITCODE -ne 0) { Die 'cargo build failed' }
-        $head = (& git rev-parse HEAD).Trim()
-        Set-Content -LiteralPath $Stamp -Value $head -NoNewline
+        if ($LASTEXITCODE -ne 0) {
+            if ($aside -and (Test-Path -LiteralPath $aside) -and -not (Test-Path -LiteralPath $Bin)) {
+                Move-Item -LiteralPath $aside -Destination $Bin -Force -ErrorAction SilentlyContinue
+            }
+            Die 'cargo build failed'
+        }
+        Write-BuildStamp
         Write-ForkLog "build ok -> $Bin"
+        if ($aside -and (Test-Path -LiteralPath $aside)) {
+            Remove-Item -LiteralPath $aside -Force -ErrorAction SilentlyContinue
+        }
     } finally {
         Pop-Location
     }

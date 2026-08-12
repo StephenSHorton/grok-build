@@ -11,7 +11,7 @@
 #   2. git fetch upstream (xai-org/grok-build)
 #   3. fast-forward local branch onto origin when possible
 #   4. rebase onto upstream/main when upstream moved
-#   5. rebuild release binary only if HEAD changed (or binary missing)
+#   5. rebuild release binary only if rust sources changed (or binary missing)
 #   6. exec the fork binary with all args
 #
 # Never changes the caller's working directory — git/cargo run under $REPO
@@ -134,13 +134,33 @@ release_lock() {
   trap - EXIT
 }
 
+path_requires_rust_rebuild() {
+  local n="${1//\\//}"
+  case "$n" in
+    scripts/*|.github/*) return 1 ;;
+    *.md|*.txt) return 1 ;;
+    LICENSE|SOURCE_REV|.gitignore|.gitattributes) return 1 ;;
+  esac
+  return 0
+}
+
 need_rebuild() {
   [[ ! -x "$BIN" ]] && return 0
   [[ ! -f "$STAMP" ]] && return 0
   local head built
   head=$(g rev-parse HEAD 2>/dev/null) || return 0
   built=$(cat "$STAMP" 2>/dev/null || true)
-  [[ "$head" != "$built" ]]
+  [[ -n "$built" ]] || return 0
+  [[ "$head" == "$built" ]] && return 1
+  g cat-file -e "${built}^{commit}" 2>/dev/null || return 0
+  local f
+  while IFS= read -r f; do
+    [[ -z "$f" ]] && continue
+    if path_requires_rust_rebuild "$f"; then
+      return 0
+    fi
+  done < <(g diff --name-only "$built" HEAD 2>/dev/null)
+  return 1
 }
 
 # Tracked-only dirtiness (never untracked — target/ can be multi-GB).
@@ -312,7 +332,15 @@ sync_remotes() {
 
 rebuild_if_needed() {
   if ! need_rebuild; then
-    log "binary current ($(g rev-parse --short HEAD 2>/dev/null || echo '?'))"
+    local head built
+    head=$(g rev-parse HEAD 2>/dev/null || true)
+    built=$(cat "$STAMP" 2>/dev/null || true)
+    if [[ -n "$head" && "$head" != "$built" ]]; then
+      printf '%s\n' "$head" >"$STAMP" 2>/dev/null || true
+      log "binary current (no rust changes since last build)"
+    else
+      log "binary current ($(g rev-parse --short HEAD 2>/dev/null || echo '?'))"
+    fi
     return 0
   fi
   if [[ ! -x "$BIN" ]] && ! command -v cargo >/dev/null 2>&1; then
@@ -326,7 +354,7 @@ rebuild_if_needed() {
   if ! command -v dotslash >/dev/null 2>&1; then
     log "warning: dotslash not found; build may need protoc on PATH"
   fi
-  log "building release binary once (HEAD moved or binary missing) …"
+  log "building release binary once (rust inputs changed or binary missing) …"
   if (
     cd "$REPO" || exit 1
     cargo build -p xai-grok-pager-bin --release
