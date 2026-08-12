@@ -57,15 +57,53 @@ function Die([string]$Message) {
     exit 1
 }
 
+function Test-LockHolderAlive {
+    $pidFile = Join-Path $LockDir 'pid'
+    if (-not (Test-Path -LiteralPath $pidFile)) { return $false }
+    $raw = Get-Content -LiteralPath $pidFile -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $raw) { return $false }
+    $holderPid = 0
+    if (-not [int]::TryParse($raw.Trim(), [ref]$holderPid)) { return $false }
+    if ($holderPid -le 0) { return $false }
+    return [bool](Get-Process -Id $holderPid -ErrorAction SilentlyContinue)
+}
+
+function Clear-Lock {
+    if (Test-Path -LiteralPath $LockDir) {
+        Remove-Item -LiteralPath $LockDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
+# Short lock wait - never block launch for minutes. Recover stale locks left
+# behind when a previous launcher was killed so we do not sit silent.
+# Returns $true if this process owns the lock.
 function Acquire-Lock {
     $waited = 0
     while ($true) {
         try {
             New-Item -ItemType Directory -Path $LockDir -ErrorAction Stop | Out-Null
-            break
+            Set-Content -LiteralPath (Join-Path $LockDir 'pid') -Value $PID
+            return $true
         } catch {
-            if ($waited -ge 600) {
-                Die "timed out waiting for launch lock ($LockDir). Remove it if stuck."
+            if (-not (Test-LockHolderAlive)) {
+                Write-ForkLog 'removing stale launch lock (no live holder)'
+                Clear-Lock
+                continue
+            }
+            $pidFile = Join-Path $LockDir 'pid'
+            $holder = '?'
+            if (Test-Path -LiteralPath $pidFile) {
+                $holder = (Get-Content -LiteralPath $pidFile -ErrorAction SilentlyContinue | Select-Object -First 1)
+                if (-not $holder) { $holder = '?' }
+            }
+            if ($waited -eq 0) {
+                Write-ForkLog "waiting for another launch (pid $holder) to finish sync ..."
+            } elseif (($waited % 5) -eq 0) {
+                Write-ForkLog "still waiting for launch lock (${waited}s) ..."
+            }
+            if ($waited -ge 15) {
+                Write-ForkLog 'another launch is still syncing - skipping sync this time'
+                return $false
             }
             Start-Sleep -Seconds 1
             $waited++
@@ -74,9 +112,7 @@ function Acquire-Lock {
 }
 
 function Release-Lock {
-    if (Test-Path $LockDir) {
-        Remove-Item -LiteralPath $LockDir -Recurse -Force -ErrorAction SilentlyContinue
-    }
+    Clear-Lock
 }
 
 function Test-NeedRebuild {
@@ -289,12 +325,13 @@ function Main {
     $skipInstall = $env:GROK_SKIP_INSTALL -eq '1'
 
     if (-not $skipSync -or -not $skipRebuild) {
-        Acquire-Lock
-        try {
-            if (-not $skipSync) { Sync-Remotes }
-            if (-not $skipRebuild) { Rebuild-IfNeeded }
-        } finally {
-            Release-Lock
+        if (Acquire-Lock) {
+            try {
+                if (-not $skipSync) { Sync-Remotes }
+                if (-not $skipRebuild) { Rebuild-IfNeeded }
+            } finally {
+                Release-Lock
+            }
         }
     }
 
