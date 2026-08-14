@@ -1,0 +1,168 @@
+#!/usr/bin/env bash
+# GIT_SEQUENCE_EDITOR helper: drop fork commits that a later rebase-todo
+# entry reverts. Used by scripts/grok so a feat+revert pair cannot stall
+# launch-time `git rebase` on an unrelated upstream conflict forever.
+#
+# Input: path to git-rebase-todo (argv[1]).
+# Matching: a `revert:` / `Revert` line shares 2+ significant tokens with an
+# earlier pick (or 1 token when the revert only has one). Only those picks
+# and the revert itself are dropped — unrelated commits in between stay.
+#
+# Bash 3.2 compatible (macOS /bin/bash).
+
+set -euo pipefail
+
+todo="${1:-}"
+if [[ -z "$todo" || ! -f "$todo" ]]; then
+  echo "fork-drop-reverted-todo: missing todo file" >&2
+  exit 1
+fi
+
+is_stopword() {
+  case "$1" in
+    a|an|the|to|for|from|with|and|or|of|in|on|at|by|as|is|be|it|this|that|into|under|over|remove|revert|keep|only|fork|feat|fix|chore|docs|refactor|update|added|add|plus|then|than|onto|into|your|our|their|via|using|just|not|but|without|after|before|when|while)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+# stdout: one significant token per line (lowercase, len>=4)
+tokens_of() {
+  local s="$1" t
+  s=$(printf '%s' "$s" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' ' ')
+  for t in $s; do
+    [[ ${#t} -ge 4 ]] || continue
+    is_stopword "$t" && continue
+    printf '%s\n' "$t"
+  done
+}
+
+shared_token_count() {
+  local a="$1" b="$2" t count=0
+  # IFS-split on newlines stored in $a
+  oifs=$IFS
+  IFS='
+'
+  set -- $a
+  IFS=$oifs
+  for t in "$@"; do
+    [[ -z "$t" ]] && continue
+    if printf '%s\n' "$b" | grep -Fxq -- "$t"; then
+      count=$((count + 1))
+    fi
+  done
+  printf '%s' "$count"
+}
+
+tmp="${todo}.fork-rewrite.$$"
+: >"$tmp"
+
+# Pass 1: copy lines; record pick subjects in parallel files.
+picks_subj="${todo}.fork-picks-subj.$$"
+picks_toks="${todo}.fork-picks-toks.$$"
+picks_ln="${todo}.fork-picks-ln.$$"
+: >"$picks_subj"
+: >"$picks_toks"
+: >"$picks_ln"
+
+ln=0
+while IFS= read -r line || [[ -n "$line" ]]; do
+  ln=$((ln + 1))
+  printf '%s\n' "$line" >>"$tmp"
+  case "$line" in
+    ''|'#'*) continue ;;
+  esac
+  cmd=${line%% *}
+  rest=${line#* }
+  case "$cmd" in
+    pick|p)
+      subj=${rest#* }
+      # git 2.50+ todo: `pick <sha> # <subject>`
+      case "$subj" in
+        '#'*) subj=${subj#\#} ; subj=${subj# } ;;
+      esac
+      printf '%s\n' "$subj" >>"$picks_subj"
+      # tokens as a single line, space-separated
+      toks=$(tokens_of "$subj" | tr '\n' ' ')
+      printf '%s\n' "$toks" >>"$picks_toks"
+      printf '%s\n' "$ln" >>"$picks_ln"
+      ;;
+  esac
+done <"$todo"
+
+n=$(wc -l <"$picks_subj" | tr -d ' ')
+if [[ -z "$n" || "$n" -eq 0 ]]; then
+  rm -f "$picks_subj" "$picks_toks" "$picks_ln" "$tmp"
+  exit 0
+fi
+
+drop_idx="${todo}.fork-drop.$$"
+: >"$drop_idx"
+
+j=0
+while IFS= read -r subj; do
+  j=$((j + 1))
+  case "$subj" in
+    [Rr]evert:*|[Rr]evert\ *) ;;
+    *) continue ;;
+  esac
+  rtoks=$(sed -n "${j}p" "$picks_toks")
+  rcount=0
+  for t in $rtoks; do
+    rcount=$((rcount + 1))
+  done
+  [[ $rcount -ge 1 ]] || continue
+  need=2
+  [[ $rcount -eq 1 ]] && need=1
+
+  i=0
+  while IFS= read -r itoks; do
+    i=$((i + 1))
+    [[ $i -lt $j ]] || break
+    shared=$(shared_token_count "$(printf '%s' "$itoks" | tr ' ' '\n')" "$(printf '%s' "$rtoks" | tr ' ' '\n')")
+    if [[ "$shared" -ge "$need" ]]; then
+      echo "$i" >>"$drop_idx"
+      echo "$j" >>"$drop_idx"
+    fi
+  done <"$picks_toks"
+done <"$picks_subj"
+
+if [[ ! -s "$drop_idx" ]]; then
+  rm -f "$picks_subj" "$picks_toks" "$picks_ln" "$drop_idx" "$tmp"
+  exit 0
+fi
+
+# Unique pick-list indices to drop (1-based in the picks files).
+drop_uniq=$(sort -n -u "$drop_idx")
+dropped=0
+out="${todo}.fork-out.$$"
+: >"$out"
+
+# Build a set of source-todo line numbers to rewrite.
+drop_src_lns="${todo}.fork-drop-src.$$"
+: >"$drop_src_lns"
+for idx in $drop_uniq; do
+  sed -n "${idx}p" "$picks_ln" >>"$drop_src_lns"
+  rest=$(sed -n "${idx}p" "$tmp")
+  rest=${rest#* }
+  echo "fork-drop-reverted-todo: drop ${rest}" >&2
+  dropped=$((dropped + 1))
+done
+
+src_ln=0
+while IFS= read -r line || [[ -n "$line" ]]; do
+  src_ln=$((src_ln + 1))
+  if grep -Fxq -- "$src_ln" "$drop_src_lns"; then
+    rest=${line#* }
+    printf 'drop %s\n' "$rest" >>"$out"
+  else
+    printf '%s\n' "$line" >>"$out"
+  fi
+done <"$tmp"
+
+mv "$out" "$todo"
+rm -f "$picks_subj" "$picks_toks" "$picks_ln" "$drop_idx" "$drop_src_lns" "$tmp"
+
+echo "fork-drop-reverted-todo: dropped $dropped commit(s) in a later-reverted series" >&2
+exit 0

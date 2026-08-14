@@ -28,8 +28,8 @@ One pass, **at most one rebuild**:
 
 1. `git fetch origin` (this fork on GitHub)
 2. `git fetch upstream` (`xai-org/grok-build`)
-3. Fast-forward onto origin when behind (no auto-push; no auto-merge if diverged)
-4. Rebase onto `upstream/main` when upstream moved
+3. Fast-forward onto origin when behind. If histories diverged but every local commit subject already exists on origin (a rewrite), reset to origin so extra remote-only patches are not left behind. Unique local subjects are kept.
+4. Rebase onto `upstream/main` when upstream moved. `scripts/fork-drop-reverted-todo` drops a feat+revert series so a later-reverted experiment cannot stall every launch. After a successful rebase, force-with-lease push `main` so other machines can fast-forward.
 5. `cargo build --release` only if rust/build inputs changed (or binary missing). Script/docs-only commits skip cargo (Windows cannot overwrite a running `.exe`).
 6. Exec the binary (`xai-grok-pager` / `.exe`)
 
@@ -91,6 +91,7 @@ grok --version                         # stderr: [grok-fork] …
 | `scripts/install-local.ps1` | Windows | wire `grok.cmd` launcher / rollback / official |
 | `scripts/grok` | macOS/Linux | launch-time sync + rebuild + exec |
 | `scripts/grok.ps1` | Windows | same |
+| `scripts/fork-drop-reverted-todo` | all | `GIT_SEQUENCE_EDITOR`: drop later-reverted commit series |
 | `scripts/grok-official` | macOS/Linux | stock binary from `~/.grok/downloads` |
 
 ### Repair
@@ -113,6 +114,7 @@ grok --version                         # stderr: [grok-fork] …
 |----------|--------|
 | `GROK_SKIP_SYNC=1` | skip fetch / ff / rebase |
 | `GROK_SKIP_REBUILD=1` | skip cargo |
+| `GROK_SKIP_PUSH=1` | skip force-with-lease push after a successful rebase |
 | `GROK_SOLID_BG=1` | stock solid canvas backgrounds |
 | `GROK_FORK_REPO` | override checkout path |
 | `GROK_FORK_BRANCH` | default `main` |
@@ -123,8 +125,8 @@ grok --version                         # stderr: [grok-fork] …
 
 | Remote | Points at | On open |
 |--------|-----------|---------|
-| `origin` | `StephenSHorton/grok-build` | fetch + FF if behind |
-| `upstream` | `https://github.com/xai-org/grok-build.git` | fetch + rebase if ahead |
+| `origin` | `StephenSHorton/grok-build` | fetch + FF if behind; reset if rewrite with no unique local commits; push after a successful upstream rebase |
+| `upstream` | `https://github.com/xai-org/grok-build.git` | fetch + rebase if ahead (drop later-reverted series) |
 
 ```bash
 git remote add upstream https://github.com/xai-org/grok-build.git   # once
@@ -156,6 +158,8 @@ Prerequisites on each machine: stock Grok + rustup + this clone. That is the pro
 ## Silent failure we already hit (do not repeat)
 
 `install-local` once pointed `bin/grok` at a **copied** release binary under `downloads/` (macOS codesign workaround). That removed launch-time git sync with no error. Default install wires the launcher only; setup scripts **fail** if the link/cmd is wrong.
+
+A later-reverted experiment (session-events feat + revert) sat in `main` history. Every launch saw upstream ahead, hit a conflict on the feat, aborted, and never rebuilt. Do not leave feat+revert pairs on `main`; the launcher now drops them via `scripts/fork-drop-reverted-todo`.
 
 ---
 

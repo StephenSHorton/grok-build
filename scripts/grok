@@ -9,16 +9,19 @@
 # On every start (one pass, one rebuild max):
 #   1. git fetch origin  (your GitHub fork)
 #   2. git fetch upstream (xai-org/grok-build)
-#   3. fast-forward local branch onto origin when possible
-#   4. rebase onto upstream/main when upstream moved
-#   5. rebuild release binary only if rust sources changed (or binary missing)
-#   6. exec the fork binary with all args
+#   3. fast-forward onto origin; if histories were rewritten but local has no
+#      unique commit subjects, reset to origin (take their extras)
+#   4. rebase onto upstream/main, dropping later-reverted commit series
+#   5. force-with-lease push of a successful rebase so other machines can FF
+#   6. rebuild release binary only if rust sources changed (or binary missing)
+#   7. exec the fork binary with all args
 #
 # Never changes the caller's working directory — git/cargo run under $REPO
 # via git -C / subshells so Grok opens in the directory you launched from.
 #
 # Skip sync/rebuild:  GROK_SKIP_SYNC=1 grok ...
 # Skip rebuild only:  GROK_SKIP_REBUILD=1 grok ...
+# Skip origin push:   GROK_SKIP_PUSH=1 grok ...
 # Stock solid bg:     GROK_SOLID_BG=1 grok ...
 
 set -uo pipefail
@@ -168,8 +171,18 @@ tracked_dirty() {
   [[ -n $(g status --porcelain -uno 2>/dev/null) ]]
 }
 
+# Subjects on A..B that do not appear on B..A. Used to tell "rewritten same
+# stack" (empty) from "local has unique work" (keep local).
+unique_subjects() {
+  local left="$1" right="$2"
+  comm -23 \
+    <(g log --format=%s "$left" 2>/dev/null | sed '/^$/d' | sort -u) \
+    <(g log --format=%s "$right" 2>/dev/null | sed '/^$/d' | sort -u)
+}
+
 # Fast-forward local BRANCH onto origin/ORIGIN_REF when we are strictly behind.
-# Does not push. Diverged histories are reported and left alone.
+# Diverged rewrites with no unique local subjects reset to origin.
+# Does not push here (push happens after a successful upstream rebase).
 integrate_origin() {
   if ! g remote get-url "$ORIGIN_REMOTE" &>/dev/null; then
     log "no remote '$ORIGIN_REMOTE' — skipping fork pull"
@@ -215,22 +228,55 @@ integrate_origin() {
     return 0
   fi
 
-  # Diverged.
+  # Diverged. Identical commit subjects ⇒ rewritten stack; take origin if
+  # local added nothing of its own (origin may have extra launcher fixes).
   behind=$(g rev-list --count HEAD.."$ORIGIN_REMOTE/$ORIGIN_REF" 2>/dev/null || echo "?")
-  log "origin and local have diverged (+$behind on origin) — not auto-merging"
+  local uniq
+  uniq=$(unique_subjects "$ORIGIN_REMOTE/$ORIGIN_REF"..HEAD HEAD.."$ORIGIN_REMOTE/$ORIGIN_REF") || uniq="?"
+  if [[ -z "$uniq" ]]; then
+    log "origin is a rewrite with no unique local commits — resetting $BRANCH to $ORIGIN_REMOTE/$ORIGIN_REF"
+    if g reset --hard "$ORIGIN_REMOTE/$ORIGIN_REF" >/dev/null 2>&1; then
+      log "reset complete ($(g rev-parse --short HEAD 2>/dev/null || echo '?'))"
+      return 0
+    fi
+    log "warning: reset to origin failed — launching current tree"
+    write_status "origin_reset_failed" "$behind" "$origin_short" \
+      "could not reset onto rewritten $ORIGIN_REMOTE/$ORIGIN_REF"
+    return 0
+  fi
+
+  log "origin and local have diverged (+$behind on origin; unique local commits kept)"
   write_status "origin_diverged" "$behind" "$origin_short" \
     "local and $ORIGIN_REMOTE/$ORIGIN_REF diverged — merge/rebase in the fork repo, then relaunch"
   return 0
 }
 
+push_rebased_origin() {
+  if [[ "${GROK_SKIP_PUSH:-}" == "1" ]]; then
+    log "skipping push of rebased $BRANCH (GROK_SKIP_PUSH=1)"
+    return 0
+  fi
+  if ! g remote get-url "$ORIGIN_REMOTE" &>/dev/null; then
+    return 0
+  fi
+  log "publishing rebased $BRANCH to $ORIGIN_REMOTE (force-with-lease)"
+  if g push --force-with-lease -- "$ORIGIN_REMOTE" "HEAD:refs/heads/$ORIGIN_REF" >/dev/null 2>&1; then
+    log "pushed $BRANCH → $ORIGIN_REMOTE/$ORIGIN_REF"
+  else
+    log "warning: could not push rebased $BRANCH — other machines may stay diverged until you push"
+  fi
+}
+
 # Rebase local BRANCH onto upstream when upstream moved.
+# Drops feat+revert series via scripts/fork-drop-reverted-todo so a later-reverted
+# experiment cannot stall every launch on an unrelated upstream conflict.
 integrate_upstream() {
   if ! g remote get-url "$UPSTREAM_REMOTE" &>/dev/null; then
     log "warning: missing remote '$UPSTREAM_REMOTE' — skipping upstream rebase"
     return 0
   fi
 
-  local head up base behind up_short
+  local head up base behind up_short head_before
   head=$(g rev-parse HEAD 2>/dev/null) || return 0
   up=$(g rev-parse "$UPSTREAM_REMOTE/$UPSTREAM_REF" 2>/dev/null) || {
     log "warning: missing $UPSTREAM_REMOTE/$UPSTREAM_REF after fetch — skipping upstream rebase"
@@ -246,14 +292,33 @@ integrate_upstream() {
 
   behind=$(g rev-list --count HEAD.."$UPSTREAM_REMOTE/$UPSTREAM_REF" 2>/dev/null || echo "0")
   log "upstream is $behind commit(s) ahead — rebasing $BRANCH onto $UPSTREAM_REMOTE/$UPSTREAM_REF"
-  if ! g rebase "$UPSTREAM_REMOTE/$UPSTREAM_REF" 2>/dev/null; then
-    log "rebase hit conflicts — aborting and starting Grok with a notice"
+  head_before=$head
+
+  local todo_editor="$REPO/scripts/fork-drop-reverted-todo"
+  local rebase_ok=0
+  if [[ -x "$todo_editor" ]]; then
+    # GIT_SEQUENCE_EDITOR is honored; `git -c sequence.editor=` is not on Apple Git.
+    if GIT_EDITOR=true GIT_SEQUENCE_EDITOR="$todo_editor" \
+      g rebase --empty=drop -i "$UPSTREAM_REMOTE/$UPSTREAM_REF"; then
+      rebase_ok=1
+    fi
+  elif g rebase --empty=drop "$UPSTREAM_REMOTE/$UPSTREAM_REF"; then
+    rebase_ok=1
+  fi
+
+  if [[ $rebase_ok -eq 0 ]]; then
+    local conflicts
+    conflicts=$(g diff --name-only --diff-filter=U 2>/dev/null | tr '\n' ' ')
+    log "rebase hit conflicts${conflicts:+ ($conflicts)} — aborting and starting Grok with a notice"
     g rebase --abort 2>/dev/null || true
     write_status "rebase_conflict" "$behind" "$up_short" \
       "upstream update could not be rebased automatically (+${behind}) — fix in the fork repo, then relaunch"
     return 0
   fi
   log "rebase complete ($(g rev-parse --short HEAD 2>/dev/null || echo '?'))"
+  if [[ "$(g rev-parse HEAD 2>/dev/null || true)" != "$head_before" ]]; then
+    push_rebased_origin
+  fi
   return 0
 }
 

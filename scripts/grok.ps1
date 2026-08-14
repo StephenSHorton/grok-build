@@ -7,13 +7,16 @@
   On every start (unless skipped) - one pass, one rebuild max:
     1. git fetch origin (your GitHub fork)
     2. git fetch upstream (xai-org/grok-build)
-    3. fast-forward onto origin when behind; rebase onto upstream when moved
-    4. rebuild release binary only when rust sources changed (or binary missing)
-    5. install into ~/.grok/bin (replacing stock) when the binary changes
-    6. exec the fork binary with all args
+    3. fast-forward onto origin; reset to origin when it is a rewrite with no unique local commits
+    4. rebase onto upstream when moved (drop later-reverted commit series)
+    5. force-with-lease push of a successful rebase
+    6. rebuild release binary only when rust sources changed (or binary missing)
+    7. install into ~/.grok/bin (replacing stock) when the binary changes
+    8. exec the fork binary with all args
 
   Skip sync/rebuild:  $env:GROK_SKIP_SYNC = '1'
   Skip rebuild only:  $env:GROK_SKIP_REBUILD = '1'  (still fetches/reports)
+  Skip origin push:   $env:GROK_SKIP_PUSH = '1'
   Skip install step:  $env:GROK_SKIP_INSTALL = '1'
   Stock solid bg:     $env:GROK_SOLID_BG = '1'
 #>
@@ -171,6 +174,31 @@ function Move-ReleaseBinaryAside {
     }
 }
 
+function Get-UniqueSubjects([string]$LeftRange, [string]$RightRange) {
+    $left = @(& git log --format=%s $LeftRange 2>$null | Where-Object { $_ })
+    $right = @(& git log --format=%s $RightRange 2>$null | Where-Object { $_ })
+    if (-not $left -or $left.Count -eq 0) { return @() }
+    $rightSet = @{}
+    foreach ($s in $right) { $rightSet[$s] = $true }
+    return @($left | Where-Object { -not $rightSet.ContainsKey($_) } | Select-Object -Unique)
+}
+
+function Push-RebasedOrigin {
+    if ($env:GROK_SKIP_PUSH -eq '1') {
+        Write-ForkLog "skipping push of rebased $Branch (GROK_SKIP_PUSH=1)"
+        return
+    }
+    $remotes = & git remote
+    if ($remotes -notcontains $OriginRemote) { return }
+    Write-ForkLog "publishing rebased $Branch to $OriginRemote (force-with-lease)"
+    & git push --force-with-lease -- $OriginRemote "HEAD:refs/heads/$OriginRef" 2>$null | Out-Null
+    if ($LASTEXITCODE -eq 0) {
+        Write-ForkLog "pushed $Branch -> $OriginRemote/$OriginRef"
+    } else {
+        Write-ForkLog "warning: could not push rebased $Branch - other machines may stay diverged until you push"
+    }
+}
+
 function Integrate-Origin {
     $remotes = & git remote
     if ($remotes -notcontains $OriginRemote) {
@@ -211,7 +239,19 @@ function Integrate-Origin {
     }
     $behind = (& git rev-list --count "HEAD..$OriginRemote/$OriginRef" 2>$null)
     if (-not $behind) { $behind = '?' }
-    Write-ForkLog "origin and local have diverged (+$behind on origin) - not auto-merging"
+    $uniq = Get-UniqueSubjects "$OriginRemote/$OriginRef..HEAD" "HEAD..$OriginRemote/$OriginRef"
+    if (-not $uniq -or $uniq.Count -eq 0) {
+        Write-ForkLog "origin is a rewrite with no unique local commits - resetting $Branch to $OriginRemote/$OriginRef"
+        & git reset --hard "$OriginRemote/$OriginRef" 2>$null | Out-Null
+        if ($LASTEXITCODE -eq 0) {
+            $short = (& git rev-parse --short HEAD).Trim()
+            Write-ForkLog "reset complete ($short)"
+        } else {
+            Write-ForkLog 'warning: reset to origin failed - launching current tree'
+        }
+        return
+    }
+    Write-ForkLog "origin and local have diverged (+$behind on origin; unique local commits kept)"
 }
 
 function Integrate-Upstream {
@@ -235,14 +275,44 @@ function Integrate-Upstream {
     $behind = (& git rev-list --count "HEAD..$UpstreamRemote/$UpstreamRef" 2>$null)
     if (-not $behind) { $behind = '?' }
     Write-ForkLog "upstream is $behind commit(s) ahead - rebasing $Branch onto $UpstreamRemote/$UpstreamRef"
-    & git rebase "$UpstreamRemote/$UpstreamRef"
-    if ($LASTEXITCODE -ne 0) {
+    $headBefore = (& git rev-parse HEAD).Trim()
+    $todoEditor = Join-Path $Repo 'scripts\fork-drop-reverted-todo'
+    $rebaseOk = $false
+    if (Test-Path -LiteralPath $todoEditor) {
+        $sh = Get-Command sh -ErrorAction SilentlyContinue
+        if (-not $sh) { $sh = Get-Command bash -ErrorAction SilentlyContinue }
+        $prevEditor = $env:GIT_EDITOR
+        $env:GIT_EDITOR = 'true'
+        try {
+            $editorCmd = if ($sh) { "$($sh.Source) `"$todoEditor`"" } else { $todoEditor }
+            $prevSeq = $env:GIT_SEQUENCE_EDITOR
+            $env:GIT_SEQUENCE_EDITOR = $editorCmd
+            try {
+                & git rebase --empty=drop -i "$UpstreamRemote/$UpstreamRef"
+                if ($LASTEXITCODE -eq 0) { $rebaseOk = $true }
+            } finally {
+                if ($null -eq $prevSeq) { Remove-Item Env:GIT_SEQUENCE_EDITOR -ErrorAction SilentlyContinue }
+                else { $env:GIT_SEQUENCE_EDITOR = $prevSeq }
+            }
+        } finally {
+            if ($null -eq $prevEditor) { Remove-Item Env:GIT_EDITOR -ErrorAction SilentlyContinue }
+            else { $env:GIT_EDITOR = $prevEditor }
+        }
+    } else {
+        & git rebase --empty=drop "$UpstreamRemote/$UpstreamRef"
+        if ($LASTEXITCODE -eq 0) { $rebaseOk = $true }
+    }
+    if (-not $rebaseOk) {
         Write-ForkLog "rebase hit conflicts - aborting and continuing with current tree"
         & git rebase --abort 2>$null | Out-Null
         return
     }
     $short = (& git rev-parse --short HEAD).Trim()
     Write-ForkLog "rebase complete ($short)"
+    $headAfter = (& git rev-parse HEAD).Trim()
+    if ($headAfter -ne $headBefore) {
+        Push-RebasedOrigin
+    }
 }
 
 function Sync-Remotes {
