@@ -278,33 +278,45 @@ function Integrate-Upstream {
     $headBefore = (& git rev-parse HEAD).Trim()
     $todoEditor = Join-Path $Repo 'scripts\fork-drop-reverted-todo'
     $rebaseOk = $false
-    if (Test-Path -LiteralPath $todoEditor) {
-        $sh = Get-Command sh -ErrorAction SilentlyContinue
-        if (-not $sh) { $sh = Get-Command bash -ErrorAction SilentlyContinue }
-        $prevEditor = $env:GIT_EDITOR
-        $env:GIT_EDITOR = 'true'
-        try {
-            $editorCmd = if ($sh) { "$($sh.Source) `"$todoEditor`"" } else { $todoEditor }
-            $prevSeq = $env:GIT_SEQUENCE_EDITOR
-            $env:GIT_SEQUENCE_EDITOR = $editorCmd
-            try {
-                & git rebase --empty=drop -i "$UpstreamRemote/$UpstreamRef"
+    $prevEA = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        if (Test-Path -LiteralPath $todoEditor) {
+            $editorCmd = Get-SequenceEditorCommand $todoEditor
+            if ($editorCmd) {
+                $prevEditor = $env:GIT_EDITOR
+                $env:GIT_EDITOR = 'true'
+                $prevSeq = $env:GIT_SEQUENCE_EDITOR
+                $env:GIT_SEQUENCE_EDITOR = $editorCmd
+                try {
+                    Write-ForkLog "sequence editor: $editorCmd"
+                    & git rebase --empty=drop -i "$UpstreamRemote/$UpstreamRef"
+                    if ($LASTEXITCODE -eq 0) { $rebaseOk = $true }
+                } finally {
+                    if ($null -eq $prevSeq) { Remove-Item Env:GIT_SEQUENCE_EDITOR -ErrorAction SilentlyContinue }
+                    else { $env:GIT_SEQUENCE_EDITOR = $prevSeq }
+                    if ($null -eq $prevEditor) { Remove-Item Env:GIT_EDITOR -ErrorAction SilentlyContinue }
+                    else { $env:GIT_EDITOR = $prevEditor }
+                }
+            } else {
+                Write-ForkLog 'Git bash not found - rebasing without drop-reverted-todo helper'
+                & git rebase --empty=drop "$UpstreamRemote/$UpstreamRef"
                 if ($LASTEXITCODE -eq 0) { $rebaseOk = $true }
-            } finally {
-                if ($null -eq $prevSeq) { Remove-Item Env:GIT_SEQUENCE_EDITOR -ErrorAction SilentlyContinue }
-                else { $env:GIT_SEQUENCE_EDITOR = $prevSeq }
             }
-        } finally {
-            if ($null -eq $prevEditor) { Remove-Item Env:GIT_EDITOR -ErrorAction SilentlyContinue }
-            else { $env:GIT_EDITOR = $prevEditor }
+        } else {
+            & git rebase --empty=drop "$UpstreamRemote/$UpstreamRef"
+            if ($LASTEXITCODE -eq 0) { $rebaseOk = $true }
         }
-    } else {
-        & git rebase --empty=drop "$UpstreamRemote/$UpstreamRef"
-        if ($LASTEXITCODE -eq 0) { $rebaseOk = $true }
+    } finally {
+        $ErrorActionPreference = $prevEA
     }
     if (-not $rebaseOk) {
-        Write-ForkLog "rebase hit conflicts - aborting and continuing with current tree"
-        & git rebase --abort 2>$null | Out-Null
+        if (Test-RebaseInProgress) {
+            Write-ForkLog 'rebase failed - aborting and continuing with current tree'
+            Abort-RebaseIfNeeded
+        } else {
+            Write-ForkLog 'rebase did not start (editor/setup failed) - continuing with current tree'
+        }
         return
     }
     $short = (& git rev-parse --short HEAD).Trim()
@@ -321,6 +333,14 @@ function Sync-Remotes {
     }
     Push-Location $Repo
     try {
+        # A previous launch can die mid-rebase and leave HEAD on a clean
+        # upstream snapshot (no scripts/grok.ps1). Never start another
+        # checkout/rebase until that is cleaned up.
+        if (Test-RebaseInProgress) {
+            Write-ForkLog 'git rebase already in progress - skipping sync (abort or finish it, then relaunch)'
+            return
+        }
+
         $current = (& git rev-parse --abbrev-ref HEAD).Trim()
         if ($current -ne $Branch) {
             Write-ForkLog "checking out $Branch (was on $current)"
@@ -355,8 +375,15 @@ function Sync-Remotes {
         Integrate-Upstream
 
         if ($stashed) {
-            & git stash pop 2>$null | Out-Null
-            if ($LASTEXITCODE -eq 0) {
+            $prevEA = $ErrorActionPreference
+            $ErrorActionPreference = 'Continue'
+            try {
+                & git stash pop | Out-Null
+                $popCode = $LASTEXITCODE
+            } finally {
+                $ErrorActionPreference = $prevEA
+            }
+            if ($popCode -eq 0) {
                 Write-ForkLog 'restored stashed changes'
             } else {
                 Write-ForkLog "warning: stash pop had conflicts - check 'git stash list' / status"
