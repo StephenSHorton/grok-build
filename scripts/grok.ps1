@@ -40,10 +40,13 @@ $LockDir = Join-Path $Repo '.fork-launch.lock'
 $InstallDir = if ($env:GROK_INSTALL_DIR) { $env:GROK_INSTALL_DIR } else { Join-Path $HOME '.grok\bin' }
 $ProtocDir = Join-Path $Repo '.tools\protoc\bin'
 
-# Prefer cargo tools + local protoc for rebuilds
+# Prefer cargo tools + local protoc for rebuilds. Put Git's real bash ahead of
+# the 0-byte WindowsApps WSL stub so Get-Command/PATH never pick that up.
+$gitBin = Join-Path $env:ProgramFiles 'Git\bin'
 $env:Path = @(
     (Join-Path $HOME '.cargo\bin'),
     $ProtocDir,
+    $gitBin,
     $env:Path
 ) -join ';'
 
@@ -58,6 +61,75 @@ function Write-ForkLog([string]$Message) {
 function Die([string]$Message) {
     Write-ForkLog "error: $Message"
     exit 1
+}
+
+# Git for Windows runs GIT_SEQUENCE_EDITOR via sh, which eats backslashes.
+# Convert C:\foo\bar -> /c/foo/bar so the command survives.
+function ConvertTo-ShPath([string]$WinPath) {
+    if (-not $WinPath) { return $WinPath }
+    $full = $WinPath
+    try { $full = [IO.Path]::GetFullPath($WinPath) } catch { }
+    $full = $full -replace '\\', '/'
+    if ($full.Length -ge 2 -and $full[1] -eq ':') {
+        $drive = [char]::ToLowerInvariant($full[0])
+        $rest = $full.Substring(2).TrimStart('/')
+        return "/${drive}/${rest}"
+    }
+    return $full
+}
+
+# Never use the WindowsApps bash.exe stub (0 bytes, App Execution Alias).
+function Get-GitBashExe {
+    $candidates = @(
+        (Join-Path $env:ProgramFiles 'Git\bin\bash.exe'),
+        (Join-Path $env:ProgramFiles 'Git\usr\bin\bash.exe')
+    )
+    $pf86 = ${env:ProgramFiles(x86)}
+    if ($pf86) { $candidates += (Join-Path $pf86 'Git\bin\bash.exe') }
+    foreach ($c in $candidates) {
+        if (-not $c -or -not (Test-Path -LiteralPath $c)) { continue }
+        $item = Get-Item -LiteralPath $c -ErrorAction SilentlyContinue
+        if ($item -and $item.Length -gt 0) { return $item.FullName }
+    }
+    return $null
+}
+
+function Get-GitDir {
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $d = & git rev-parse --git-dir 2>$null
+        if ($LASTEXITCODE -ne 0 -or -not $d) { return $null }
+        return ([string]$d).Trim()
+    } finally {
+        $ErrorActionPreference = $prev
+    }
+}
+
+function Test-RebaseInProgress {
+    $gitDir = Get-GitDir
+    if (-not $gitDir) { return $false }
+    return (Test-Path (Join-Path $gitDir 'rebase-merge')) -or (Test-Path (Join-Path $gitDir 'rebase-apply'))
+}
+
+function Abort-RebaseIfNeeded {
+    if (-not (Test-RebaseInProgress)) { return }
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'SilentlyContinue'
+    try {
+        cmd /c 'git rebase --abort >nul 2>&1' | Out-Null
+    } finally {
+        $ErrorActionPreference = $prev
+    }
+}
+
+# Quoted Unix-path command Git's sh can exec. $null if Git bash is missing.
+function Get-SequenceEditorCommand([string]$TodoScript) {
+    $bash = Get-GitBashExe
+    if (-not $bash) { return $null }
+    $bashSh = ConvertTo-ShPath $bash
+    $todoSh = ConvertTo-ShPath $TodoScript
+    return "'$bashSh' '$todoSh'"
 }
 
 function Test-LockHolderAlive {
