@@ -452,7 +452,11 @@ pub fn draw_frame(
         Option<crate::terminal::overlay::PostFlush>,
     ),
 ) {
-    let _ = terminal.backend_mut().queue(BeginSynchronizedUpdate);
+    // Windows ConPTY mishandles DEC 2026 (strips or re-buffers). Wrapping
+    // frames in it mixed Grok diffs. Unix PTYs still get atomic updates.
+    if !cfg!(windows) {
+        let _ = terminal.backend_mut().queue(BeginSynchronizedUpdate);
+    }
     let _ = terminal.autoresize();
     let mut link_spans: Vec<LinkSpan> = Vec::new();
     let (cursor_pos, post_flush_escapes) = {
@@ -472,7 +476,9 @@ pub fn draw_frame(
         let _ = post_flush.write_to(terminal.backend_mut());
     }
     cursor.apply(action, terminal.backend_mut());
-    let _ = terminal.backend_mut().queue(EndSynchronizedUpdate);
+    if !cfg!(windows) {
+        let _ = terminal.backend_mut().queue(EndSynchronizedUpdate);
+    }
     let _ = terminal.backend_mut().flush();
 }
 #[cfg(test)]

@@ -343,11 +343,27 @@ where
         let current_buffer = &self.buffers[self.current];
         let updates = diff_large(previous_buffer, current_buffer);
         let has_changes = !updates.is_empty();
-        if let Some((col, row, _)) = updates.last() {
-            self.last_known_cursor_pos = Position { x: *col, y: *row };
+        if !has_changes {
+            return Ok(false);
         }
-        self.backend.draw(updates.into_iter())?;
-        Ok(has_changes)
+        if cfg!(windows) {
+            // ConPTY ignores SGR 49 (Reset bg) and keeps the previous RGB —
+            // slash-dropdown cards stay painted after dismiss. Chroma-key
+            // Reset → RGB(0,0,0) so the host can treat black as rain.
+            let mut patched = current_buffer.clone();
+            chroma_key_reset_bg(&mut patched);
+            let updates = diff_all(&patched);
+            if let Some((col, row, _)) = updates.last() {
+                self.last_known_cursor_pos = Position { x: *col, y: *row };
+            }
+            self.backend.draw(updates.into_iter())?;
+        } else {
+            if let Some((col, row, _)) = updates.last() {
+                self.last_known_cursor_pos = Position { x: *col, y: *row };
+            }
+            self.backend.draw(updates.into_iter())?;
+        }
+        Ok(true)
     }
 
     /// Set the hyperlink spans for the frame about to be flushed.
@@ -433,18 +449,36 @@ where
             &self.link_tables[cur],
         );
         let has_changes = !updates.is_empty();
-        if let Some((col, row, _)) = updates.last() {
-            self.last_known_cursor_pos = Position { x: *col, y: *row };
+        if !has_changes {
+            return Ok(false);
         }
-        let area = self.buffers[cur].area;
-        emit_frame_with_links(
-            &mut self.backend,
-            &updates,
-            &self.link_ids[cur],
-            &self.link_tables[cur],
-            area,
-        )?;
-        Ok(has_changes)
+        if cfg!(windows) {
+            let mut patched = self.buffers[cur].clone();
+            chroma_key_reset_bg(&mut patched);
+            let updates = diff_all(&patched);
+            if let Some((col, row, _)) = updates.last() {
+                self.last_known_cursor_pos = Position { x: *col, y: *row };
+            }
+            let area = patched.area;
+            emit_frame_with_links(
+                &mut self.backend,
+                &updates,
+                &self.link_ids[cur],
+                &self.link_tables[cur],
+                area,
+            )?;
+        } else if let Some((col, row, _)) = updates.last() {
+            self.last_known_cursor_pos = Position { x: *col, y: *row };
+            let area = self.buffers[cur].area;
+            emit_frame_with_links(
+                &mut self.backend,
+                &updates,
+                &self.link_ids[cur],
+                &self.link_tables[cur],
+                area,
+            )?;
+        }
+        Ok(true)
     }
 
     /// Updates the Terminal so that internal buffers match the requested area.
@@ -1179,6 +1213,39 @@ where
 /// before dividing by width, silently wrapping at 65 535.  This replacement
 /// performs the division in `usize` so terminals with >65 535 cells render
 /// correctly.
+/// ConPTY does not apply SGR 49. Map Reset backgrounds to RGB black so a
+/// full-frame rewrite actually overwrites leftover dropdown/modal fills.
+fn chroma_key_reset_bg(buf: &mut Buffer) {
+    use ratatui::style::Color;
+    for cell in &mut buf.content {
+        if matches!(cell.bg, Color::Reset) {
+            cell.set_bg(Color::Rgb(0, 0, 0));
+        }
+    }
+}
+
+/// Every non-skip cell in `next` (wide-char tails omitted). Used on Windows
+/// so ConPTY cannot keep stale glyphs for Reset/space cells the diff skipped.
+fn diff_all<'a>(next: &'a Buffer) -> Vec<(u16, u16, &'a Cell)> {
+    let area = next.area;
+    let width = area.width as usize;
+    let mut updates = Vec::with_capacity(next.content.len());
+    let mut to_skip = 0usize;
+    for (i, cell) in next.content.iter().enumerate() {
+        if to_skip > 0 {
+            to_skip -= 1;
+            continue;
+        }
+        if !cell.skip {
+            let x = area.x + (i % width) as u16;
+            let y = area.y + (i / width) as u16;
+            updates.push((x, y, cell));
+        }
+        to_skip = cell.symbol().width().saturating_sub(1);
+    }
+    updates
+}
+
 fn diff_large<'a>(prev: &Buffer, next: &'a Buffer) -> Vec<(u16, u16, &'a Cell)> {
     let previous_buffer = &prev.content;
     let next_buffer = &next.content;
