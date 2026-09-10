@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Install this on PATH as `grok-fork`. Does not overwrite official `grok`.
+# Channels default on: Tsukumo only emits after a conversation binds.
+set -euo pipefail
+export GROK_PROCESS_BRAND=fork
+export GROK_DISABLE_AUTOUPDATER="${GROK_DISABLE_AUTOUPDATER:-1}"
+export GROK_MCP_CHANNELS="${GROK_MCP_CHANNELS:-1}"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+RELEASE="${GROK_FORK_BIN:-$ROOT/target/release/xai-grok-pager}"
+if [[ -x "$RELEASE" ]]; then
+  exec "$RELEASE" "$@"
+fi
+echo "grok-fork: missing $RELEASE — cargo build -p xai-grok-pager-bin --release" >&2
+exit 1

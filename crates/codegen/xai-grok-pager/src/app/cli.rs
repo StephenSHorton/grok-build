@@ -722,9 +722,10 @@ pub struct PagerArgs {
     #[arg(long = "no-auto-update", hide = true)]
     pub no_auto_update: bool,
     /// Treat MCP `notifications/claude/channel` (and `notifications/x.ai/channel`) as same-session user turns.
+    /// On `grok-fork` this is already the default (Tsukumo only emits after a conversation binds).
+    /// Official `grok` stays off unless you pass this flag, set `[cli] channels = true`, or `GROK_MCP_CHANNELS=1`.
     /// Bare `--channels` enables every connected MCP server. A spec such as `plugin:discord@claude-plugins-official`
     /// is accepted for Claude-flag compatibility and currently treated the same as bare `--channels`.
-    /// Persist with `[cli] channels = true` in config.toml so you do not have to remember the flag.
     #[arg(
         long = "channels",
         num_args = 0..=1,

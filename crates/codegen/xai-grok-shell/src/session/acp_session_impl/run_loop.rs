@@ -25,6 +25,8 @@ mod yolo_toggle_report_tests {
 }
 /// MCP channel inject (`--channels` / `[cli] channels` / `GROK_MCP_CHANNELS`).
 /// Env wins so a CLI flag that exported the env var is visible in this process and in a child leader.
+/// `grok-fork` defaults on: Tsukumo (and similar) only emit when a conversation is bound, so
+/// idle chats stay quiet without a flag. Official `grok` stays off unless opted in.
 fn mcp_channels_enabled() -> bool {
     match crate::agent::config::env_bool("GROK_MCP_CHANNELS") {
         Some(v) => v,
@@ -35,8 +37,14 @@ fn mcp_channels_enabled() -> bool {
                     .and_then(|cli| cli.get("channels"))
                     .and_then(|v| v.as_bool())
             })
-            .unwrap_or(false),
+            .unwrap_or_else(fork_channels_default),
     }
+}
+
+fn fork_channels_default() -> bool {
+    std::env::var("GROK_PROCESS_BRAND")
+        .map(|v| v.eq_ignore_ascii_case("fork"))
+        .unwrap_or(false)
 }
 
 fn spawn_dream_check(session: &Arc<SessionActor>) -> tokio::task::JoinHandle<()> {
