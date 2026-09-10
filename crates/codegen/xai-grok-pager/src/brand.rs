@@ -8,9 +8,25 @@ use std::sync::OnceLock;
 
 fn brand() -> &'static str {
     static BRAND: OnceLock<String> = OnceLock::new();
-    BRAND.get_or_init(|| match std::env::var("GROK_PROCESS_BRAND") {
-        Ok(v) if v.eq_ignore_ascii_case("fork") => "grok-fork".into(),
-        _ => "grok".into(),
+    BRAND.get_or_init(|| {
+        if std::env::var("GROK_PROCESS_BRAND")
+            .map(|v| v.eq_ignore_ascii_case("fork"))
+            .unwrap_or(false)
+        {
+            return "grok-fork".into();
+        }
+        // Installing the binary as `grok-fork` (no wrapper) should still brand as fork.
+        let argv0 = std::env::args_os().next();
+        let name = argv0
+            .as_ref()
+            .and_then(|p| std::path::Path::new(p).file_stem())
+            .and_then(|s| s.to_str())
+            .unwrap_or("");
+        if name.eq_ignore_ascii_case("grok-fork") {
+            "grok-fork".into()
+        } else {
+            "grok".into()
+        }
     })
 }
 
