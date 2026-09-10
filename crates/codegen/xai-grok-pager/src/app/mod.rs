@@ -1776,12 +1776,13 @@ pub(crate) fn set_terminal_title(title: &str) {
 /// Strips control characters: crossterm's `SetTitle` emits the string raw inside an OSC sequence.
 /// An embedded BEL/ESC would terminate the OSC early and let the remainder inject arbitrary escape sequences into the terminal.
 fn terminal_title_string(title: &str) -> String {
+    let product = crate::brand::product_name();
     let sanitized: String = title.chars().filter(|c| !c.is_control()).collect();
     if sanitized.is_empty() {
-        "grok".into()
+        product.into()
     } else {
         let truncated: String = sanitized.chars().take(80 - 6).collect();
-        format!("{} - grok", truncated)
+        format!("{truncated} - {product}")
     }
 }
 /// Run a best-effort teardown `f` on a helper thread, waiting at most `grace` for it.

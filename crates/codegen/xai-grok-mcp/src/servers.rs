@@ -2889,8 +2889,9 @@ pub enum LivenessCheck {
 }
 
 /// Events emitted by a live MCP client to its session-side dispatcher.
-/// [`crate::liveness::spawn_transport_liveness`], when an `is_healthy` poll observes the rmcp service loop shut down (`TransportClosed`); [`GrokClientHandler`] when the server pushes a notification we care about. Currently `notifications/tools/list_changed` and `notifications/resources/list_changed`; The session/managed-config layer when a server is added, removed, or successfully (re-)initialized.
-/// Consumers fan these out to ACP `x.ai/mcp/server_status` after 50 ms of tumbling-window coalescing keyed by `(server, kind)`.
+/// [`crate::liveness::spawn_transport_liveness`], when an `is_healthy` poll observes the rmcp service loop shut down (`TransportClosed`); [`GrokClientHandler`] when the server pushes a notification we care about. Currently `notifications/tools/list_changed`, `notifications/resources/list_changed`, and (when `--channels` is on) `notifications/claude/channel` / `notifications/x.ai/channel`; The session/managed-config layer when a server is added, removed, or successfully (re-)initialized.
+/// Status events fan out to ACP `x.ai/mcp/server_status` after 50 ms of tumbling-window coalescing keyed by `(server, kind)`.
+/// Channel inbound is **not** coalesced: each message is a distinct user turn.
 #[derive(Debug, Clone)]
 pub enum McpClientEvent {
     /// The rmcp service loop has terminated; the client is no longer usable for tool calls and must be torn down (or restarted).
@@ -2915,6 +2916,9 @@ pub enum McpClientEvent {
         server: McpServerName,
         elicitation_id: String,
     },
+    /// Server pushed `notifications/claude/channel` or `notifications/x.ai/channel`.
+    /// The session dispatcher injects these as same-session turns when `--channels` is enabled.
+    ChannelMessage(crate::channel::ChannelInbound),
     /// Client transitioned to [`ClientState::Ready`]; dispatcher uses this to surface "ready" status without polling.
     /// Emitted from `ensure_initialized`; the dispatcher maps it to `reason=initialized`.
     /// `reason=restart_succeeded` is reserved for the restart path.
@@ -2944,6 +2948,7 @@ pub enum McpClientEventKind {
     ToolsChanged,
     ResourcesChanged,
     ElicitationComplete,
+    ChannelMessage,
     Ready,
     ConfigAdded,
     ConfigRemoved,
@@ -2963,6 +2968,7 @@ impl McpClientEvent {
             | Self::Ready { server }
             | Self::ConfigAdded { server }
             | Self::ConfigRemoved { server } => Some(server.as_str()),
+            Self::ChannelMessage(inbound) => Some(inbound.server.as_str()),
             Self::ConfigDiff { .. } => None,
         }
     }
@@ -5051,11 +5057,34 @@ impl ClientHandler for GrokClientHandler {
     }
 
     // rmcp 3.x dropped the typed URL-elicitation completion handler; the notification (either the 2026-07-28 `notifications/elicitation/response` or the 2025-11-25 `notifications/elicitation/complete` spelling) now arrives through the custom-notification catch-all.
+    // Channel inbound (`notifications/claude/channel` / `notifications/x.ai/channel`) also lands here.
     async fn on_custom_notification(
         &self,
         notification: rmcp::model::CustomNotification,
         _context: NotificationContext<RoleClient>,
     ) {
+        if crate::channel::is_channel_method(&notification.method) {
+            let Some(params) = notification.params.as_ref() else {
+                tracing::warn!(
+                    server = %self.server_name,
+                    method = %notification.method,
+                    "channel notification without params; dropping"
+                );
+                return;
+            };
+            let Some(inbound) =
+                crate::channel::ChannelInbound::from_params(&self.server_name, params)
+            else {
+                tracing::warn!(
+                    server = %self.server_name,
+                    method = %notification.method,
+                    "channel notification missing content; dropping"
+                );
+                return;
+            };
+            self.emit(McpClientEvent::ChannelMessage(inbound));
+            return;
+        }
         if notification.method != "notifications/elicitation/response"
             && notification.method != "notifications/elicitation/complete"
         {

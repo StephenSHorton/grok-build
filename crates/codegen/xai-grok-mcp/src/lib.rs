@@ -41,6 +41,7 @@ pub fn isolate_grok_home_for_tests() {
 
 pub mod acp_transport;
 mod auth_status;
+pub mod channel;
 pub mod credentials;
 pub mod elicitation;
 mod generation;

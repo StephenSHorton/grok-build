@@ -926,6 +926,11 @@ pub struct CliConfig {
     pub npm_registry: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub channel: Option<String>,
+    /// Treat MCP `notifications/claude/channel` (and `notifications/x.ai/channel`) as same-session user turns.
+    /// Distinct from [`Self::channel`] (the auto-update release channel).
+    /// CLI `--channels` / env `GROK_MCP_CHANNELS` also enable this; the flag is not required when this is `true`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub channels: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub use_leader: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]

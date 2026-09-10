@@ -1368,6 +1368,7 @@ async fn reasoning_only_doomloop_turn_captures_every_generation_as_segments() {
             ));
             tokio::task::spawn_local(super::run_session(
                 actor.clone(),
+                cmd_tx.clone(),
                 cmd_rx,
                 chat_rx,
                 event_rx,

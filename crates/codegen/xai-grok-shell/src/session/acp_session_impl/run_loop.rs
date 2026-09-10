@@ -23,6 +23,22 @@ mod yolo_toggle_report_tests {
         assert_eq!(yolo_toggle_report(true, true), None);
     }
 }
+/// MCP channel inject (`--channels` / `[cli] channels` / `GROK_MCP_CHANNELS`).
+/// Env wins so a CLI flag that exported the env var is visible in this process and in a child leader.
+fn mcp_channels_enabled() -> bool {
+    match crate::agent::config::env_bool("GROK_MCP_CHANNELS") {
+        Some(v) => v,
+        None => crate::config::load_effective_config()
+            .ok()
+            .and_then(|root| {
+                root.get("cli")
+                    .and_then(|cli| cli.get("channels"))
+                    .and_then(|v| v.as_bool())
+            })
+            .unwrap_or(false),
+    }
+}
+
 fn spawn_dream_check(session: &Arc<SessionActor>) -> tokio::task::JoinHandle<()> {
     let session = session.clone();
     tokio::task::spawn_local(async move {
@@ -353,6 +369,7 @@ impl StartupTasks {
 }
 pub(super) async fn run_session(
     session: Arc<SessionActor>,
+    cmd_tx: mpsc::UnboundedSender<SessionCommand>,
     mut cmd_rx: mpsc::UnboundedReceiver<SessionCommand>,
     mut chat_state_event_rx: mpsc::UnboundedReceiver<xai_chat_state::ChatStateEvent>,
     mut event_rx: mpsc::UnboundedReceiver<SessionEvent>,
@@ -487,8 +504,9 @@ pub(super) async fn run_session(
             } else {
                 None
             };
+        let mcp_channels_inject_tx = mcp_channels_enabled().then(|| cmd_tx.clone());
         tokio::task::spawn_local(async move {
-            crate::session::mcp_dispatcher::run_dispatcher(
+            crate::session::mcp_dispatcher::run_dispatcher_with_inject(
                 dispatcher_session_id,
                 event_rx,
                 dispatcher_gateway,
@@ -496,6 +514,7 @@ pub(super) async fn run_session(
                 shutdown_state,
                 restart_actions,
                 dispatcher_cwd,
+                mcp_channels_inject_tx,
             )
             .await;
         });
