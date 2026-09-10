@@ -1713,6 +1713,22 @@ fn configure_process_env(mut args: PagerArgs) -> Result<PagerArgs> {
         }
         if args.channels.is_some() {
             std::env::set_var("GROK_MCP_CHANNELS", "1");
+        } else if std::env::var_os("GROK_MCP_CHANNELS").is_none() {
+            let branded = std::env::var("GROK_PROCESS_BRAND")
+                .map(|v| v.eq_ignore_ascii_case("fork"))
+                .unwrap_or(false);
+            let argv0_fork = std::env::args_os()
+                .next()
+                .as_ref()
+                .and_then(|p| std::path::Path::new(p).file_stem())
+                .and_then(|s| s.to_str())
+                .is_some_and(|n| n.eq_ignore_ascii_case("grok-fork"));
+            if branded || argv0_fork {
+                if std::env::var_os("GROK_PROCESS_BRAND").is_none() {
+                    std::env::set_var("GROK_PROCESS_BRAND", "fork");
+                }
+                std::env::set_var("GROK_MCP_CHANNELS", "1");
+            }
         }
         if let Some(path) = args.debug_file.as_deref() {
             std::env::set_var("GROK_DEBUG_LOG", path);
