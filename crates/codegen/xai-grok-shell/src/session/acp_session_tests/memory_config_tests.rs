@@ -842,6 +842,7 @@ async fn test_run_session_spawns_launch_dream() {
             ));
             tokio::task::spawn_local(super::run_session(
                 actor.clone(),
+                _cmd_tx.clone(),
                 cmd_rx,
                 chat_rx,
                 event_rx,

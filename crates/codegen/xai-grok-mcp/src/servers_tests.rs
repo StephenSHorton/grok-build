@@ -4318,6 +4318,32 @@ async fn client_handler_routes_tools_changed() {
 }
 
 #[tokio::test]
+async fn client_handler_routes_channel_message() {
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<McpClientEvent>();
+    let handler = GrokClientHandler {
+        info: McpClient::make_client_info("tsukumo", /* advertise_elicitation */ false),
+        server_name: "tsukumo".to_string(),
+        notify_tx: Arc::new(parking_lot::Mutex::new(Some(tx))),
+        elicitation_tx: Arc::new(parking_lot::Mutex::new(None)),
+    };
+    handler.emit(McpClientEvent::ChannelMessage(
+        crate::channel::ChannelInbound {
+            server: "tsukumo".to_string(),
+            content: "ping".to_string(),
+            meta: vec![("message_id".to_string(), "1".to_string())],
+        },
+    ));
+    let ev = rx.recv().await.expect("event arrived");
+    match ev {
+        McpClientEvent::ChannelMessage(inbound) => {
+            assert_eq!(inbound.server, "tsukumo");
+            assert_eq!(inbound.content, "ping");
+        }
+        other => panic!("expected ChannelMessage, got {other:?}"),
+    }
+}
+
+#[tokio::test]
 async fn client_handler_observes_post_handshake_set_event_tx() {
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<McpClientEvent>();
     let client = Arc::new(McpClient::stub("test"));
