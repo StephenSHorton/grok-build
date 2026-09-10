@@ -2,7 +2,7 @@
 //!
 //! Receives [`xai_grok_mcp::servers::McpClientEvent`]s emitted by:
 //! - per-client transport-liveness watchers ([`xai_grok_mcp::liveness`]),
-//! - the [`xai_grok_mcp::servers::GrokClientHandler`] (server-pushed `tools/list_changed` and `resources/list_changed`),
+//! - the [`xai_grok_mcp::servers::GrokClientHandler`] (server-pushed `tools/list_changed`, `resources/list_changed`, and channel inbound),
 //! - the `ensure_initialized` success/failure path,
 //! - the session MCP config diff path (`UpdateMcpServers` / toggle).
 //!
@@ -29,7 +29,7 @@ use std::time::Duration;
 use agent_client_protocol as acp;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex as TokioMutex;
-use tokio::sync::mpsc::UnboundedReceiver;
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use xai_grok_mcp::servers::{
     McpClientEvent, McpClientEventKind, McpServerName, McpState, mcp_server_name, mcp_transport_str,
 };
@@ -159,6 +159,8 @@ pub(crate) struct CoalescedWindow {
     /// All `TransportClosed` client identities per server seen in the window.
     pub closed: HashMap<McpServerName, HashSet<u64>>,
     pub completes: Vec<(McpServerName, String)>,
+    /// Channel inbound is one-turn-per-message; last-write-wins coalescing would drop Discord chatter.
+    pub channel_messages: Vec<xai_grok_mcp::channel::ChannelInbound>,
 }
 
 /// Coalesce the buffered events for one window flush.
@@ -209,6 +211,9 @@ fn insert_event(win: &mut CoalescedWindow, ev: McpClientEvent) {
         } => {
             win.completes.push((server, elicitation_id));
         }
+        McpClientEvent::ChannelMessage(inbound) => {
+            win.channel_messages.push(inbound);
+        }
         ev => {
             if let McpClientEvent::TransportClosed { server, client_id } = &ev {
                 win.closed
@@ -233,6 +238,11 @@ fn kind_of(ev: &McpClientEvent) -> McpClientEventKind {
         McpClientEvent::ToolsChanged { .. } => McpClientEventKind::ToolsChanged,
         McpClientEvent::ResourcesChanged { .. } => McpClientEventKind::ResourcesChanged,
         McpClientEvent::ElicitationComplete { .. } => McpClientEventKind::ElicitationComplete,
+        McpClientEvent::ChannelMessage(_) => {
+            unreachable!(
+                "ChannelMessage is diverted into win.channel_messages by insert_event before kind_of is called"
+            )
+        }
         McpClientEvent::Ready { .. } => McpClientEventKind::Ready,
         McpClientEvent::ConfigAdded { .. } => McpClientEventKind::ConfigAdded,
         McpClientEvent::ConfigRemoved { .. } => McpClientEventKind::ConfigRemoved,
@@ -278,6 +288,9 @@ pub(crate) fn build_payload(
         ),
         (McpClientEventKind::ElicitationComplete, _) => {
             unreachable!("ElicitationComplete is diverted into win.completes by insert_event")
+        }
+        (McpClientEventKind::ChannelMessage, _) => {
+            unreachable!("ChannelMessage is diverted into win.channel_messages by insert_event")
         }
         (McpClientEventKind::ResourcesChanged, _) => (
             McpServerStatus::Ready,
@@ -380,6 +393,46 @@ fn flush_elicitation_completes(
                     "failed to serialize mcp/elicit_complete"
                 );
             }
+        }
+    }
+}
+
+fn flush_channel_messages(
+    messages: Vec<xai_grok_mcp::channel::ChannelInbound>,
+    cmd_tx: Option<&tokio::sync::mpsc::UnboundedSender<crate::session::SessionCommand>>,
+) {
+    let Some(tx) = cmd_tx else {
+        if !messages.is_empty() {
+            tracing::debug!(
+                count = messages.len(),
+                "dropping MCP channel inbound; --channels is not enabled"
+            );
+        }
+        return;
+    };
+    for inbound in messages {
+        let prompt_id = format!("channel-{}-{}", inbound.server, uuid::Uuid::now_v7());
+        let message_id = inbound
+            .message_id()
+            .map(str::to_owned)
+            .unwrap_or_else(|| prompt_id.clone());
+        let prompt = inbound.to_prompt();
+        if tx
+            .send(crate::session::SessionCommand::InjectNotification {
+                prompt_id,
+                prompt_blocks: vec![acp::ContentBlock::Text(acp::TextContent::new(prompt))],
+                priority: crate::session::NotificationPriority::Next,
+                source: crate::session::NotificationSource::Channel {
+                    server: inbound.server,
+                    message_id,
+                },
+            })
+            .is_err()
+        {
+            tracing::warn!(
+                "session command channel closed; dropping remaining MCP channel inbound"
+            );
+            break;
         }
     }
 }
@@ -488,12 +541,36 @@ pub(crate) async fn drop_dead_clients(
 /// Skipped entirely when `restart_actions` is `None`.
 pub(crate) async fn run_dispatcher(
     session_id: String,
+    rx: UnboundedReceiver<McpClientEvent>,
+    gateway: xai_acp_lib::AcpAgentGatewaySender,
+    mcp_state: Arc<TokioMutex<McpState>>,
+    shutdown: SharedShutdownState,
+    restart_actions: Option<Rc<dyn crate::session::mcp_restart::RestartActions>>,
+    cwd: std::path::PathBuf,
+) {
+    run_dispatcher_with_inject(
+        session_id,
+        rx,
+        gateway,
+        mcp_state,
+        shutdown,
+        restart_actions,
+        cwd,
+        None,
+    )
+    .await;
+}
+
+/// Same as [`run_dispatcher`], plus an optional session-command sender for `--channels` inject.
+pub(crate) async fn run_dispatcher_with_inject(
+    session_id: String,
     mut rx: UnboundedReceiver<McpClientEvent>,
     gateway: xai_acp_lib::AcpAgentGatewaySender,
     mcp_state: Arc<TokioMutex<McpState>>,
     shutdown: SharedShutdownState,
     restart_actions: Option<Rc<dyn crate::session::mcp_restart::RestartActions>>,
     cwd: std::path::PathBuf,
+    inject_tx: Option<UnboundedSender<crate::session::SessionCommand>>,
 ) {
     // Cancellation source for spawned `auto_restart_stdio` tasks.
     // The dispatcher exiting (channel closed) means the session is shutting down, so we cancel.
@@ -510,6 +587,8 @@ pub(crate) async fn run_dispatcher(
         let completes = std::mem::take(&mut win.completes);
         // Completes are independent fire-and-forget notifications, so they flush here regardless of whether any status entries survive below
         flush_elicitation_completes(&session_id, completes, &gateway);
+        let channel_messages = std::mem::take(&mut win.channel_messages);
+        flush_channel_messages(channel_messages, inject_tx.as_ref());
         if win.buf.is_empty() {
             continue;
         }
@@ -650,6 +729,83 @@ mod tests {
         assert_eq!(win.buf.len(), 1, "100 ToolsChanged collapse to one");
         let key = ("github".to_string(), McpClientEventKind::ToolsChanged);
         assert!(win.buf.contains_key(&key));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn channel_messages_accumulate_instead_of_coalescing() {
+        let (tx, mut rx) = unbounded_channel::<McpClientEvent>();
+        tx.send(McpClientEvent::ChannelMessage(
+            xai_grok_mcp::channel::ChannelInbound {
+                server: "tsukumo".to_string(),
+                content: "one".to_string(),
+                meta: vec![("message_id".to_string(), "1".to_string())],
+            },
+        ))
+        .unwrap();
+        tx.send(McpClientEvent::ChannelMessage(
+            xai_grok_mcp::channel::ChannelInbound {
+                server: "tsukumo".to_string(),
+                content: "two".to_string(),
+                meta: vec![("message_id".to_string(), "2".to_string())],
+            },
+        ))
+        .unwrap();
+        drop(tx);
+
+        let win = collect_window(&mut rx, COALESCE_WINDOW)
+            .await
+            .expect("at least one event");
+        assert!(
+            win.buf.is_empty(),
+            "channel inbound must not occupy the status buffer"
+        );
+        assert_eq!(win.channel_messages.len(), 2);
+        assert_eq!(win.channel_messages[0].content, "one");
+        assert_eq!(win.channel_messages[1].content, "two");
+    }
+
+    #[test]
+    fn flush_channel_messages_injects_when_sender_is_wired() {
+        let (tx, mut rx) = unbounded_channel::<crate::session::SessionCommand>();
+        let inbound = xai_grok_mcp::channel::ChannelInbound {
+            server: "tsukumo".to_string(),
+            content: "hello from discord".to_string(),
+            meta: vec![
+                ("chat_id".to_string(), "c1".to_string()),
+                ("message_id".to_string(), "m1".to_string()),
+            ],
+        };
+        flush_channel_messages(vec![inbound], Some(&tx));
+        match rx.try_recv() {
+            Ok(crate::session::SessionCommand::InjectNotification {
+                prompt_blocks,
+                priority,
+                source: crate::session::NotificationSource::Channel { server, message_id },
+                ..
+            }) => {
+                assert_eq!(server, "tsukumo");
+                assert_eq!(message_id, "m1");
+                assert_eq!(priority, crate::session::NotificationPriority::Next);
+                let text = match &prompt_blocks[0] {
+                    acp::ContentBlock::Text(t) => t.text.as_str(),
+                    _ => panic!("expected text block"),
+                };
+                assert!(text.contains("hello from discord"));
+                assert!(text.contains("source=\"tsukumo\""));
+            }
+            _ => panic!("expected InjectNotification"),
+        }
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn flush_channel_messages_drops_without_sender() {
+        let inbound = xai_grok_mcp::channel::ChannelInbound {
+            server: "tsukumo".to_string(),
+            content: "ignored".to_string(),
+            meta: vec![],
+        };
+        flush_channel_messages(vec![inbound], None);
     }
 
     #[tokio::test(start_paused = true)]

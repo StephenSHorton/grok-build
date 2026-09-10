@@ -139,6 +139,7 @@ impl Harness {
         });
         tokio::task::spawn_local(super::run_session(
             self.actor.clone(),
+            cmd_tx.clone(),
             cmd_rx,
             chat_rx,
             events,

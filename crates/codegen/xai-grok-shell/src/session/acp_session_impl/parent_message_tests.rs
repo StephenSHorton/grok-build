@@ -578,6 +578,7 @@ async fn cancel_running_turn_shutdown_drains_after_stale_rewind_cancel() {
         let (_chat_tx, chat_rx) = mpsc::unbounded_channel();
         let loop_task = tokio::task::spawn_local(super::super::run_session(
             Arc::clone(&actor),
+            cmd_tx.clone(),
             cmd_rx,
             chat_rx,
             event_rx,
@@ -844,6 +845,7 @@ async fn delivered_message_is_durable_in_updates_and_chat_history_before_shutdow
         let (_chat_tx, chat_rx) = mpsc::unbounded_channel();
         let loop_task = tokio::task::spawn_local(super::super::run_session(
             Arc::clone(&actor),
+            cmd_tx.clone(),
             cmd_rx,
             chat_rx,
             event_rx,

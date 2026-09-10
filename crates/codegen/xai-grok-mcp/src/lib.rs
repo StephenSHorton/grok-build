@@ -45,6 +45,7 @@ pub mod acp_transport;
 mod auth_status;
 mod bearer_token_file;
 mod call_result;
+pub mod channel;
 pub mod credentials;
 pub mod elicitation;
 mod generation;

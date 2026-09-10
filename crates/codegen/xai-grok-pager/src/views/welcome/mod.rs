@@ -552,7 +552,11 @@ pub(super) fn render_version_badge(
         spans.push(sep);
     }
 
-    let channel = xai_grok_update::channel_label();
+    let channel = format!(
+        "{}{}",
+        xai_grok_update::channel_label(),
+        crate::brand::fork_version_suffix(),
+    );
     match &mode {
         VersionBadgeMode::Full { .. } => {
             spans.push(Span::styled(
@@ -582,7 +586,7 @@ pub(super) fn render_version_badge(
                     .add_modifier(Modifier::BOLD),
             ));
             spans.push(Span::styled(
-                xai_grok_version::VERSION,
+                format!("{}{}", xai_grok_version::VERSION, crate::brand::fork_version_suffix()),
                 Style::default().fg(theme.gray),
             ));
         }

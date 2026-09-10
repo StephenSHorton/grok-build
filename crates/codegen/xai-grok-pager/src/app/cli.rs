@@ -721,6 +721,19 @@ pub struct PagerArgs {
     /// Disable automatic updates for this session.
     #[arg(long = "no-auto-update", hide = true)]
     pub no_auto_update: bool,
+    /// Treat MCP `notifications/claude/channel` (and `notifications/x.ai/channel`) as same-session user turns.
+    /// Bare `--channels` enables every connected MCP server. A spec such as `plugin:discord@claude-plugins-official`
+    /// is accepted for Claude-flag compatibility and currently treated the same as bare `--channels`.
+    /// Persist with `[cli] channels = true` in config.toml so you do not have to remember the flag.
+    #[arg(
+        long = "channels",
+        num_args = 0..=1,
+        default_missing_value = "*",
+        value_name = "SPEC",
+        global = true,
+        value_parser = parse_channels_spec
+    )]
+    pub channels: Option<String>,
     /// Enable the runtime turn-end TodoGate for this session.
     /// Session-scoped (not persisted).
     /// Highest precedence: overrides remote `todo_gate_enabled` and the built-in default (which is `false`).
@@ -802,6 +815,18 @@ fn strip_cur_dir(path: PathBuf) -> PathBuf {
     path.components()
         .filter(|component| !matches!(component, std::path::Component::CurDir))
         .collect()
+}
+/// `--channels` optional value: a plugin spec (`plugin:discord@…`) or `*` from the bare flag.
+/// Rejects ordinary words so `grok --channels "fix the bug"` cannot steal the prompt.
+fn parse_channels_spec(s: &str) -> Result<String, String> {
+    let trimmed = s.trim();
+    if trimmed == "*" || trimmed.contains(':') || trimmed.contains('@') {
+        Ok(trimmed.to_string())
+    } else {
+        Err(format!(
+            "invalid --channels spec '{s}'. Use --channels, or --channels plugin:name"
+        ))
+    }
 }
 impl PagerArgs {
     pub fn memory_enabled_override(&self) -> Option<bool> {
@@ -1055,6 +1080,36 @@ mod tests {
                 .command,
             Some(Command::Version { json: false })
         ));
+    }
+    #[test]
+    fn channels_flag_parses_bare_and_with_spec() {
+        assert!(
+            PagerArgs::try_parse_from(["grok"])
+                .unwrap()
+                .channels
+                .is_none()
+        );
+        let bare = PagerArgs::try_parse_from(["grok", "--channels"]).unwrap();
+        assert_eq!(bare.channels.as_deref(), Some("*"));
+        let spec = PagerArgs::try_parse_from([
+            "grok",
+            "--channels",
+            "plugin:discord@claude-plugins-official",
+        ])
+        .unwrap();
+        assert_eq!(
+            spec.channels.as_deref(),
+            Some("plugin:discord@claude-plugins-official")
+        );
+        let after_subcommand = PagerArgs::try_parse_from(["grok", "agent", "--channels"]).unwrap();
+        assert_eq!(after_subcommand.channels.as_deref(), Some("*"));
+        assert!(
+            PagerArgs::try_parse_from(["grok", "--channels", "hello"]).is_err(),
+            "a prompt word must not be eaten as a channels spec"
+        );
+        let with_prompt = PagerArgs::try_parse_from(["grok", "fix it", "--channels"]).unwrap();
+        assert_eq!(with_prompt.prompt.as_deref(), Some("fix it"));
+        assert_eq!(with_prompt.channels.as_deref(), Some("*"));
     }
     #[test]
     fn doctor_accepts_report_and_explicit_fix_forms() {

@@ -5841,6 +5841,7 @@ fn config_accepts_all_known_sections() {
             disabled_mcp_servers = ["old-server"]
             [cli]
             auto_update = false
+            channels = true
             [features]
             feedback = true
             [endpoints]
