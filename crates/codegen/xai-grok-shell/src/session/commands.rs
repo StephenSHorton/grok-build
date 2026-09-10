@@ -165,9 +165,20 @@ pub enum NotificationPriority {
 }
 #[derive(Debug, Clone)]
 pub enum NotificationSource {
-    MonitorEvent { task_id: String },
-    MonitorCompleted { task_id: String },
-    BashTaskCompleted { task_id: String },
+    MonitorEvent {
+        task_id: String,
+    },
+    MonitorCompleted {
+        task_id: String,
+    },
+    BashTaskCompleted {
+        task_id: String,
+    },
+    /// MCP channel inbound (`notifications/claude/channel` / `notifications/x.ai/channel`).
+    Channel {
+        server: String,
+        message_id: String,
+    },
 }
 impl NotificationSource {
     pub fn task_id(&self) -> &str {
@@ -175,6 +186,7 @@ impl NotificationSource {
             Self::MonitorEvent { task_id }
             | Self::MonitorCompleted { task_id }
             | Self::BashTaskCompleted { task_id } => task_id,
+            Self::Channel { message_id, .. } => message_id,
         }
     }
 }

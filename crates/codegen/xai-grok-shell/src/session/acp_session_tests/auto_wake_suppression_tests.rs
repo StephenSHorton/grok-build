@@ -2089,6 +2089,7 @@ async fn monitor_event_for_idle_session_is_not_parked_while_another_session_runs
             tokio::task::spawn_local(
                 super::run_session(
                     actor.clone(),
+                    cmd_tx.clone(),
                     cmd_rx,
                     chat_rx,
                     event_rx,
@@ -2171,6 +2172,7 @@ async fn monitor_event_during_own_turn_is_buffered_for_the_turn_loop() {
             tokio::task::spawn_local(
                 super::run_session(
                     actor.clone(),
+                    cmd_tx.clone(),
                     cmd_rx,
                     chat_rx,
                     event_rx,

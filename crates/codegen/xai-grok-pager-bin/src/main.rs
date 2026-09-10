@@ -1764,6 +1764,9 @@ fn configure_process_env(mut args: PagerArgs) -> Result<PagerArgs> {
         if args.log_sampling {
             std::env::set_var("GROK_LOG_SAMPLING", "1");
         }
+        if args.channels.is_some() {
+            std::env::set_var("GROK_MCP_CHANNELS", "1");
+        }
         if let Some(path) = args.debug_file.as_deref() {
             std::env::set_var("GROK_DEBUG_LOG", path);
             std::env::remove_var("GROK_LOG_FILE");
@@ -1989,11 +1992,12 @@ fn install_heap_profile_hooks() {
 }
 fn version_text(channel_label: &str) -> String {
     format!(
-        "grok {}\n",
+        "grok {}{}\n",
         xai_grok_version::display_version_with_commit(
             xai_grok_version::full_version(),
             channel_label,
-        )
+        ),
+        xai_grok_pager::brand::fork_version_suffix(),
     )
 }
 fn write_version(writer: &mut impl std::io::Write, channel_label: &str) -> std::io::Result<()> {
