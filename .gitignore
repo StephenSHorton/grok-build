@@ -1,3 +1,11 @@
 /target
 **/*.rs.bk
 .DS_Store
+
+# grok-fork launcher state
+.fork-built-at
+.fork-launch.lock/
+.fork-upstream-status
+
+# local Windows build tools (protoc, etc.)
+.tools/
