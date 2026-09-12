@@ -113,9 +113,8 @@ mod tests {
         }
     }
 
-    /// Build a TemplateRenderer with the standard grok-build tool kinds.
-    fn default_renderer() -> TemplateRenderer {
-        let tools: HashMap<ToolKind, String> = [
+    fn default_renderer_tools() -> HashMap<ToolKind, String> {
+        [
             (ToolKind::Read, "read_file"),
             (ToolKind::Edit, "search_replace"),
             (ToolKind::Execute, "run_terminal_command"),
@@ -132,8 +131,12 @@ mod tests {
         ]
         .into_iter()
         .map(|(k, v)| (k, v.to_string()))
-        .collect();
-        TemplateRenderer::new(tools, HashMap::new())
+        .collect()
+    }
+
+    /// Build a TemplateRenderer with the standard grok-build tool kinds.
+    fn default_renderer() -> TemplateRenderer {
+        TemplateRenderer::new(default_renderer_tools(), HashMap::new())
     }
 
     fn default_placeholders() -> serde_json::Value {
@@ -393,6 +396,49 @@ mod tests {
         assert!(
             !prompt.contains("<memory>"),
             "Memory section must be omitted"
+        );
+    }
+
+    #[test]
+    fn test_sessions_section_renders_when_tools_present() {
+        let mut tools = default_renderer_tools();
+        tools.insert(ToolKind::SessionsList, "sessions_list".to_string());
+        tools.insert(ToolKind::SessionsSend, "sessions_send".to_string());
+        let r = TemplateRenderer::new(tools, HashMap::new());
+        let prompt = render_base(&r, &default_placeholders());
+        assert!(
+            prompt.contains("<sessions>"),
+            "sessions section must render when session tools are registered"
+        );
+        assert!(prompt.contains("sessions_list"));
+        assert!(prompt.contains("sessions_send"));
+        assert!(prompt.contains("sessions_claim"));
+        assert!(
+            prompt.contains("only when the user says this conversation owns that job"),
+            "duty claims must be user-initiated, not implied by a skill"
+        );
+    }
+
+    #[test]
+    fn test_sessions_section_omitted_without_tools() {
+        let prompt = render_base(&default_renderer(), &default_placeholders());
+        assert!(
+            !prompt.contains("<sessions>"),
+            "sessions section must be omitted without session tools"
+        );
+        assert!(!prompt.contains("sessions_list"));
+    }
+
+    #[test]
+    fn test_subagent_prompt_omits_sessions() {
+        let mut tools = default_renderer_tools();
+        tools.insert(ToolKind::SessionsList, "sessions_list".to_string());
+        tools.insert(ToolKind::SessionsSend, "sessions_send".to_string());
+        let r = TemplateRenderer::new(tools, HashMap::new());
+        let prompt = render_subagent(&r, &default_placeholders());
+        assert!(
+            !prompt.contains("<sessions>"),
+            "subagent prompt must never include sibling session bus"
         );
     }
 

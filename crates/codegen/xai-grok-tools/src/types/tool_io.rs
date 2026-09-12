@@ -93,6 +93,10 @@ pub enum ToolInput {
     SchedulerCreate(crate::implementations::grok_build::scheduler::create::SchedulerCreateInput),
     SchedulerDelete(crate::implementations::grok_build::scheduler::delete::SchedulerDeleteInput),
     SchedulerList(crate::implementations::grok_build::scheduler::list::SchedulerListInput),
+    SessionsList(crate::implementations::grok_build::sessions::SessionsListInput),
+    SessionsClaim(crate::implementations::grok_build::sessions::SessionsClaimInput),
+    SessionsRelease(crate::implementations::grok_build::sessions::SessionsReleaseInput),
+    SessionsSend(crate::implementations::grok_build::sessions::SessionsSendInput),
     UpdateGoal(UpdateGoalInput),
     Workflow(crate::implementations::grok_build::workflow::WorkflowToolInput),
     /// Dynamic input for runtime-registered tools (MCP, etc.)

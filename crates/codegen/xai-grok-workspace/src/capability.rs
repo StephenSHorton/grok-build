@@ -96,6 +96,8 @@ pub(crate) const ALL_TOOL_KINDS: &[ToolKind] = &[
     ToolKind::GoalUpdate,
     ToolKind::Workflow,
     ToolKind::Feedback,
+    ToolKind::SessionsList,
+    ToolKind::SessionsSend,
     ToolKind::Other,
 ];
 
@@ -119,7 +121,7 @@ pub(crate) fn kind_allowed(mode: CapabilityMode, kind: ToolKind) -> bool {
         Plan | EnterPlan | ExitPlan | AskUser | Skill | SearchTool | GoalUpdate => true,
 
         // Read class.
-        Read | MemoryGet | MemorySearch => {
+        Read | MemoryGet | MemorySearch | SessionsList => {
             matches!(mode, M::ReadOnly | M::ReadWrite | M::Execute)
         }
 
@@ -139,7 +141,7 @@ pub(crate) fn kind_allowed(mode: CapabilityMode, kind: ToolKind) -> bool {
         Execute => matches!(mode, M::Execute),
 
         BackgroundTaskAction | WaitTasksAction | KillTaskAction | Task | ActiveAgentMessage
-        | Monitor | Workflow => matches!(mode, M::Execute),
+        | Monitor | Workflow | SessionsSend => matches!(mode, M::Execute),
 
         // Integration dispatch.
         UseTool => matches!(mode, M::ReadWrite | M::Execute),

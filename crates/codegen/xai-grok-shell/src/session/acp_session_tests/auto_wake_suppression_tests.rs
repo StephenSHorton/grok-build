@@ -1396,6 +1396,70 @@ async fn split_blanket_gate_drops_all() {
     assert_eq!(dropped, 2);
 }
 #[tokio::test(flavor = "current_thread")]
+async fn split_blanket_gate_keeps_peer_session_mail() {
+    let goal_turn = std::collections::HashSet::new();
+    let notifications = vec![
+        bash_completed_notification("bg-1"),
+        PendingNotification {
+            prompt_id: "session-mail".into(),
+            prompt_blocks: vec![],
+            priority: NotificationPriority::Next,
+            source: NotificationSource::Session {
+                from_session: "eng".into(),
+                from_title: Some("eng".into()),
+                message_id: "m1".into(),
+            },
+        },
+    ];
+    let (surface, dropped) = SessionActor::split_goal_suppressed(true, &goal_turn, notifications);
+    assert_eq!(dropped, 1, "bash completion still dropped");
+    assert_eq!(surface.len(), 1);
+    assert_eq!(surface[0].source.task_id(), "m1");
+}
+#[tokio::test(flavor = "current_thread")]
+async fn drain_peer_session_mail_is_own_visible_turn() {
+    let local = tokio::task::LocalSet::new();
+    local
+        .run_until(async {
+            let (gateway_tx, _gateway_rx) = tokio::sync::mpsc::unbounded_channel();
+            let (persistence_tx, _prx) = tokio::sync::mpsc::unbounded_channel();
+            let actor = create_test_actor(0, 256_000, 85, gateway_tx, persistence_tx).await;
+            let mut state = actor.state.lock().await;
+            let drained = SessionActor::drain_notifications_into_turn(
+                &mut state,
+                vec![PendingNotification {
+                    prompt_id: "ignored".into(),
+                    prompt_blocks: vec![agent_client_protocol::ContentBlock::Text(
+                        agent_client_protocol::TextContent::new(
+                            "<channel source=\"session\">hi</channel>",
+                        ),
+                    )],
+                    priority: NotificationPriority::Next,
+                    source: NotificationSource::Session {
+                        from_session: "eng".into(),
+                        from_title: Some("inter-grok-chats".into()),
+                        message_id: "m1".into(),
+                    },
+                }],
+                "get_task_output",
+            );
+            assert!(drained);
+            let item = state.pending_inputs.back().expect("peer turn queued");
+            assert!(item.prompt_id.starts_with("peer-session-"));
+            assert!(matches!(
+                item.input_origin.as_prompt_origin(),
+                crate::session::PromptOrigin::PeerSession { message_id } if message_id == "m1"
+            ));
+            assert!(
+                !item
+                    .input_origin
+                    .as_prompt_origin()
+                    .hide_user_echo_from_scrollback()
+            );
+        })
+        .await;
+}
+#[tokio::test(flavor = "current_thread")]
 async fn drain_drops_goal_turn_origin_when_status_none_and_marks_reported() {
     let local = tokio::task::LocalSet::new();
     local

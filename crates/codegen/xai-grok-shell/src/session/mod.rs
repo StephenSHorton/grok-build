@@ -2,6 +2,7 @@ pub mod acp_types;
 pub mod announcement_state;
 pub mod auto_mode;
 pub mod batch_dream;
+pub(crate) mod bus;
 pub mod commands;
 pub(crate) mod compaction_config;
 pub(crate) mod doom_loop_telemetry;
@@ -115,6 +116,10 @@ pub enum PromptOrigin {
     /// Server-initiated prompt from the idle-gated notification drain (`maybe_drain_notifications`).
     /// Batches one or more monitor-event or bash-task-completed notifications into a single turn while the user is idle.
     NotificationDrain,
+    /// Sibling Grok conversation (`sessions_send`). Visible collapsed row in the TUI; model still sees `<channel source="session">`.
+    PeerSession {
+        message_id: String,
+    },
     /// The goal orchestrator injects a system reminder into context and then triggers a model turn so the model can print a visible progress update.
     GoalSummary,
     /// Nudge injected when the verification stage rejects an `update_goal(completed: true)` attempt.
@@ -151,6 +156,10 @@ impl PromptOrigin {
             Self::WorkflowCompleted {
                 completion_id: completion_id.to_string(),
             }
+        } else if let Some(message_id) = prompt_id.strip_prefix("peer-session-") {
+            Self::PeerSession {
+                message_id: message_id.to_string(),
+            }
         } else if prompt_id.starts_with("notifications-") {
             Self::NotificationDrain
         } else if prompt_id.starts_with("goal-summary-") {
@@ -176,7 +185,7 @@ impl PromptOrigin {
                 queue: QueuePolicy::VisibleEditable,
                 shutdown: ShutdownPolicy::Drain,
             },
-            Self::ParentAgentMessage { .. } => InputPolicy {
+            Self::ParentAgentMessage { .. } | Self::PeerSession { .. } => InputPolicy {
                 authority: InputAuthority::ModelAuthoredUntrusted,
                 slash: SlashAuthority::ModelAuthored,
                 turn_boundary: TurnBoundary::Conversational,
@@ -234,6 +243,7 @@ impl PromptOrigin {
                 | Self::WorkflowCompleted { .. }
                 | Self::ParentAgentMessage { .. }
                 | Self::ParentHumanMessage { .. }
+                | Self::PeerSession { .. }
                 | Self::NotificationDrain
         )
     }
@@ -244,6 +254,7 @@ impl PromptOrigin {
             Self::User
             | Self::ParentAgentMessage { .. }
             | Self::ParentHumanMessage { .. }
+            | Self::PeerSession { .. }
             | Self::SchedulerFired
             | Self::PlanResume => false,
             Self::TaskCompleted { .. }
@@ -262,6 +273,7 @@ impl PromptOrigin {
             Self::User
             | Self::ParentAgentMessage { .. }
             | Self::ParentHumanMessage { .. }
+            | Self::PeerSession { .. }
             | Self::NotificationDrain
             | Self::GoalSummary
             | Self::GoalClassifierNudge
@@ -434,6 +446,12 @@ mod tests {
                 },
                 QueuePolicy::Hidden,
             ),
+            (
+                PromptOrigin::PeerSession {
+                    message_id: "m".into(),
+                },
+                QueuePolicy::VisibleProtected,
+            ),
             (PromptOrigin::NotificationDrain, QueuePolicy::Hidden),
             (PromptOrigin::GoalSummary, QueuePolicy::Hidden),
             (PromptOrigin::GoalClassifierNudge, QueuePolicy::Hidden),
@@ -465,6 +483,13 @@ mod tests {
             !PromptOrigin::from_prompt_id("scheduler-fired-abc").hide_user_echo_from_scrollback()
         );
         assert!(!PromptOrigin::from_prompt_id("plan-resume-1").hide_user_echo_from_scrollback());
+        assert!(!PromptOrigin::from_prompt_id("peer-session-m1").hide_user_echo_from_scrollback());
+        assert_eq!(
+            PromptOrigin::from_prompt_id("peer-session-m1"),
+            PromptOrigin::PeerSession {
+                message_id: "m1".into()
+            }
+        );
         assert!(PromptOrigin::from_prompt_id("task-completed-t1").hide_user_echo_from_scrollback());
         assert!(
             PromptOrigin::from_prompt_id("subagent-completed-s1").hide_user_echo_from_scrollback()

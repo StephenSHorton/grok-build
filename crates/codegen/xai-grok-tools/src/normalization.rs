@@ -118,6 +118,10 @@ pub fn canonical_input(input: &ToolInput) -> Option<serde_json::Value> {
         | ToolInput::SchedulerCreate(_)
         | ToolInput::SchedulerDelete(_)
         | ToolInput::SchedulerList(_)
+        | ToolInput::SessionsList(_)
+        | ToolInput::SessionsClaim(_)
+        | ToolInput::SessionsRelease(_)
+        | ToolInput::SessionsSend(_)
         | ToolInput::UpdateGoal(_)
         | ToolInput::Workflow(_)
         | ToolInput::Dynamic(_) => return None,

@@ -70,6 +70,8 @@ impl ToolKind {
             ToolKind::GoalUpdate => "Update Goal",
             ToolKind::Workflow => "Workflow",
             ToolKind::Feedback => "Feedback",
+            ToolKind::SessionsList => "Sessions",
+            ToolKind::SessionsSend => "Send Session Message",
             ToolKind::Other => "Tool",
         }
     }
@@ -89,7 +91,8 @@ impl ToolKind {
             | ToolKind::WebFetch
             | ToolKind::EnterPlan
             | ToolKind::ExitPlan
-            | ToolKind::AskUser => true,
+            | ToolKind::AskUser
+            | ToolKind::SessionsList => true,
             ToolKind::Edit
             | ToolKind::Delete
             | ToolKind::Write
@@ -114,6 +117,7 @@ impl ToolKind {
             | ToolKind::GoalUpdate
             | ToolKind::Workflow
             | ToolKind::Feedback
+            | ToolKind::SessionsSend
             | ToolKind::Other => false,
         }
     }

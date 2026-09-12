@@ -31,6 +31,7 @@ pub mod scheduler;
 pub mod search_replace;
 pub mod send_feedback;
 pub mod send_subagent_message;
+pub mod sessions;
 pub(crate) mod storage;
 pub mod task;
 pub mod task_output;
@@ -67,6 +68,11 @@ pub use search_replace::SearchReplaceTool;
 pub use send_feedback::{SEND_FEEDBACK_TOOL_NAME, SendFeedbackTool};
 pub use send_subagent_message::{
     SEND_SUBAGENT_MESSAGE_TOOL_NAME, SendSubagentMessageDisposition, SendSubagentMessageTool,
+};
+pub use sessions::{
+    SESSIONS_CLAIM_TOOL_NAME, SESSIONS_LIST_TOOL_NAME, SESSIONS_RELEASE_TOOL_NAME,
+    SESSIONS_SEND_TOOL_NAME, SessionsClaimTool, SessionsListTool, SessionsReleaseTool,
+    SessionsSendTool,
 };
 pub use task::{TaskTool, is_task_tool_id};
 pub use task_output::{GetTerminalCommandOutputTool, TaskOutputTool, WaitTasksTool};

@@ -7,6 +7,7 @@ pub mod leader_bridge;
 pub mod meta;
 pub mod model_state;
 pub(crate) mod skills_listing;
+mod peer_send;
 pub mod spawn;
 pub(crate) mod subagent_label_registry;
 mod subagent_message;
