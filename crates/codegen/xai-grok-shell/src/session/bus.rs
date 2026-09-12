@@ -1,17 +1,21 @@
-//! Live socket + mailbox drain so sibling sessions can inject turns.
+//! Live inject + mailbox drain so sibling sessions can message each other.
 //!
-//! Live inject uses a unix domain socket. On Windows, send falls back to the
-//! mailbox and is drained when the target session starts.
+//! Unix: unix-domain socket at `live/<id>.sock`.
+//! Windows: named pipe `\\.\pipe\grok-bus-<id>` (same pattern as leader IPC).
+//! Both platforms also poll the mailbox so a failed inject still lands without
+//! restarting the target.
 
-#[cfg(unix)]
 use tokio::io::AsyncReadExt;
 use tokio::sync::mpsc;
+use tokio::time::{Duration, MissedTickBehavior};
 use tokio_util::sync::CancellationToken;
 use xai_grok_tools::implementations::grok_build::sessions::{
     PeerMessage, SessionBus, peer_message_to_prompt,
 };
 
 use super::commands::{NotificationPriority, NotificationSource, SessionCommand};
+
+const MAILBOX_POLL: Duration = Duration::from_millis(250);
 
 pub(crate) struct SessionBusGuard {
     session_id: String,
@@ -48,60 +52,133 @@ pub(crate) fn spawn_session_bus(
 
     drain_mailbox_into(&bus, &session_id, &cmd_tx);
 
-    #[cfg(not(unix))]
-    {
-        let _ = cmd_tx;
-        return Some(SessionBusGuard {
-            session_id,
-            cancel: CancellationToken::new(),
-        });
-    }
+    let cancel = CancellationToken::new();
+    spawn_mailbox_poll(session_id.clone(), cmd_tx.clone(), cancel.clone());
 
     #[cfg(unix)]
     {
-        let sock = match bus.live_socket_path(&session_id) {
-            Ok(p) => p,
-            Err(err) => {
-                tracing::warn!(error = %err, "session bus: socket path");
-                return None;
-            }
-        };
-        let _ = std::fs::remove_file(&sock);
-        let listener = match tokio::net::UnixListener::bind(&sock) {
-            Ok(l) => l,
-            Err(err) => {
-                tracing::warn!(error = %err, path = %sock.display(), "session bus: bind failed");
-                return None;
-            }
-        };
+        if let Err(err) = spawn_unix_listener(&bus, &session_id, cmd_tx, cancel.clone()) {
+            tracing::warn!(error = %err, "session bus: unix listener failed; mailbox poll still runs");
+        }
+    }
 
-        let cancel = CancellationToken::new();
-        let cancel_task = cancel.clone();
-        let sid = session_id.clone();
-        tokio::task::spawn_local(async move {
-            loop {
-                tokio::select! {
-                    _ = cancel_task.cancelled() => break,
-                    accepted = listener.accept() => {
-                        match accepted {
-                            Ok((stream, _)) => {
-                                if let Err(err) = ingest_stream(stream, &cmd_tx).await {
-                                    tracing::debug!(error = %err, session = %sid, "session bus: ingest failed");
-                                }
+    #[cfg(windows)]
+    {
+        if let Err(err) = spawn_windows_listener(&bus, &session_id, cmd_tx, cancel.clone()) {
+            tracing::warn!(error = %err, "session bus: named pipe failed; mailbox poll still runs");
+        }
+    }
+
+    Some(SessionBusGuard { session_id, cancel })
+}
+
+fn spawn_mailbox_poll(
+    session_id: String,
+    cmd_tx: mpsc::UnboundedSender<SessionCommand>,
+    cancel: CancellationToken,
+) {
+    tokio::task::spawn_local(async move {
+        let mut tick = tokio::time::interval(MAILBOX_POLL);
+        tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
+        loop {
+            tokio::select! {
+                _ = cancel.cancelled() => break,
+                _ = tick.tick() => {
+                    if let Ok(bus) = SessionBus::open_default() {
+                        drain_mailbox_into(&bus, &session_id, &cmd_tx);
+                    }
+                }
+            }
+        }
+    });
+}
+
+#[cfg(unix)]
+fn spawn_unix_listener(
+    bus: &SessionBus,
+    session_id: &str,
+    cmd_tx: mpsc::UnboundedSender<SessionCommand>,
+    cancel: CancellationToken,
+) -> std::io::Result<()> {
+    let sock = bus
+        .live_socket_path(session_id)
+        .map_err(std::io::Error::other)?;
+    let _ = std::fs::remove_file(&sock);
+    let listener = tokio::net::UnixListener::bind(&sock)?;
+    let sid = session_id.to_string();
+    tokio::task::spawn_local(async move {
+        loop {
+            tokio::select! {
+                _ = cancel.cancelled() => break,
+                accepted = listener.accept() => {
+                    match accepted {
+                        Ok((stream, _)) => {
+                            if let Err(err) = ingest_reader(stream, &cmd_tx).await {
+                                tracing::debug!(error = %err, session = %sid, "session bus: ingest failed");
                             }
-                            Err(err) => {
-                                tracing::debug!(error = %err, "session bus: accept failed");
-                                break;
-                            }
+                        }
+                        Err(err) => {
+                            tracing::debug!(error = %err, "session bus: accept failed");
+                            break;
                         }
                     }
                 }
             }
-            let _ = std::fs::remove_file(&sock);
-        });
+        }
+        let _ = std::fs::remove_file(&sock);
+    });
+    Ok(())
+}
 
-        Some(SessionBusGuard { session_id, cancel })
-    }
+#[cfg(windows)]
+fn spawn_windows_listener(
+    bus: &SessionBus,
+    session_id: &str,
+    cmd_tx: mpsc::UnboundedSender<SessionCommand>,
+    cancel: CancellationToken,
+) -> std::io::Result<()> {
+    use tokio::net::windows::named_pipe::ServerOptions;
+
+    let pipe_name = bus.live_pipe_name(session_id).map_err(std::io::Error::other)?;
+    let first = ServerOptions::new()
+        .first_pipe_instance(true)
+        .create(&pipe_name)?;
+    let sid = session_id.to_string();
+    tokio::task::spawn_local(async move {
+        let mut server = first;
+        loop {
+            tokio::select! {
+                _ = cancel.cancelled() => break,
+                connected = server.connect() => {
+                    match connected {
+                        Ok(()) => {
+                            let next = match ServerOptions::new().create(&pipe_name) {
+                                Ok(s) => s,
+                                Err(err) => {
+                                    tracing::warn!(error = %err, "session bus: next pipe instance failed");
+                                    let _ = ingest_reader(server, &cmd_tx).await;
+                                    break;
+                                }
+                            };
+                            let connected_server = std::mem::replace(&mut server, next);
+                            let tx = cmd_tx.clone();
+                            let sid = sid.clone();
+                            tokio::task::spawn_local(async move {
+                                if let Err(err) = ingest_reader(connected_server, &tx).await {
+                                    tracing::debug!(error = %err, session = %sid, "session bus: ingest failed");
+                                }
+                            });
+                        }
+                        Err(err) => {
+                            tracing::debug!(error = %err, "session bus: pipe connect failed");
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    });
+    Ok(())
 }
 
 fn drain_mailbox_into(
@@ -151,9 +228,8 @@ fn peer_content_block(msg: &PeerMessage) -> agent_client_protocol::ContentBlock 
     )
 }
 
-#[cfg(unix)]
-async fn ingest_stream(
-    mut stream: tokio::net::UnixStream,
+async fn ingest_reader<R: tokio::io::AsyncRead + Unpin>(
+    mut stream: R,
     cmd_tx: &mpsc::UnboundedSender<SessionCommand>,
 ) -> std::io::Result<()> {
     let mut len_buf = [0u8; 4];
