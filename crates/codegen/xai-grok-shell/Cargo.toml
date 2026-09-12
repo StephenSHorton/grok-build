@@ -63,12 +63,14 @@ toml = { workspace = true, features = ["preserve_order"] }
 toml_edit = { workspace = true }
 tokio = { workspace = true, features = [
     "io-std",
+    "io-util",
     "process",
     "rt",
     "macros",
     "rt-multi-thread",
     "net",
     "sync",
+    "time",
 ] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = [
