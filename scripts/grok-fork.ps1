@@ -236,11 +236,12 @@ function Test-NeedRebuild {
 
 function Move-ReleaseBinaryAside {
     if (-not (Test-Path -LiteralPath $Bin)) { return $null }
-    $aside = "$Bin.prev"
-    Remove-Item -LiteralPath $aside -Force -ErrorAction SilentlyContinue
+    # Unique dest: a leftover xai-grok-pager.exe.prev blocks -Force rename on Windows
+    # when another session still has the running image mapped.
+    $aside = "$Bin.prev.$PID.$(Get-Date -Format 'yyyyMMddHHmmss')"
     try {
         Move-Item -LiteralPath $Bin -Destination $aside -Force -ErrorAction Stop
-        Write-ForkLog 'moved in-use binary aside so cargo can replace it'
+        Write-ForkLog "moved in-use binary aside so cargo can replace it"
         return $aside
     } catch {
         Write-ForkLog "warning: could not move existing binary: $_"
