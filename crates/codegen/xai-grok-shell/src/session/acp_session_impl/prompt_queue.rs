@@ -264,6 +264,11 @@ impl SessionActor {
                     | crate::session::PromptOrigin::ParentHumanMessage { .. }
             ) {
                 "parent_agent_message"
+            } else if matches!(
+                input_origin.as_prompt_origin(),
+                crate::session::PromptOrigin::PeerSession { .. }
+            ) {
+                "peer_session"
             } else if Self::extract_bash_command(&prompt_blocks).is_some() {
                 "bash"
             } else {

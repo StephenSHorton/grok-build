@@ -283,13 +283,14 @@ fn grok_build_core_toolset_with(
     if include_send_feedback {
         tools.push((&grok_build::SendFeedbackTool).into());
     }
+    tools.extend(session_bus_tools());
     ToolServerConfig {
         tools,
         behavior_preset: None,
     }
 }
 fn grok_build_concise_toolset() -> ToolServerConfig {
-    ToolServerConfig {
+    let mut cfg = ToolServerConfig {
         tools: vec![
             (&grok_build_concise::BashConciseTool).into(),
             (&grok_build_concise::ReadFileConciseTool).into(),
@@ -307,8 +308,20 @@ fn grok_build_concise_toolset() -> ToolServerConfig {
             (&grok_build::WorkflowTool).into(),
         ],
         behavior_preset: None,
-    }
+    };
+    cfg.tools.extend(session_bus_tools());
+    cfg
 }
+
+fn session_bus_tools() -> [ToolConfig; 4] {
+    [
+        (&grok_build::SessionsListTool).into(),
+        (&grok_build::SessionsClaimTool).into(),
+        (&grok_build::SessionsReleaseTool).into(),
+        (&grok_build::SessionsSendTool).into(),
+    ]
+}
+
 /// Hashline toolset: anchor-based read/edit/search and standard utilities.
 /// `hashline_tools` should be the 3 hashline `ToolConfig` entries; they carry the scheme parameters as tool params.
 pub fn grok_build_hashline_toolset(
@@ -333,6 +346,7 @@ pub fn grok_build_hashline_toolset(
         (&grok_build::UpdateGoalTool).into(),
         (&grok_build::WorkflowTool).into(),
     ]);
+    tools.extend(session_bus_tools());
     ToolServerConfig {
         tools,
         behavior_preset: None,
@@ -387,7 +401,7 @@ fn plan_toolset() -> ToolServerConfig {
 /// Extends the default `grok-build` toolset with plan mode tools.
 /// This allows the agent to enter a structured planning phase before writing code, with user-approved plans.
 fn grok_build_plan_toolset() -> ToolServerConfig {
-    ToolServerConfig {
+    let mut cfg = ToolServerConfig {
         tools: vec![
             // Standard grok-build tools
             bash_tool_config(),
@@ -413,7 +427,9 @@ fn grok_build_plan_toolset() -> ToolServerConfig {
             (&grok_build::AskUserQuestionTool).into(),
         ],
         behavior_preset: None,
-    }
+    };
+    cfg.tools.extend(session_bus_tools());
+    cfg
 }
 /// Orchestrator toolset: read/search/orchestration tools only. No terminal execution, no file editing.
 /// The orchestrator delegates all execution and file modification to subagents.

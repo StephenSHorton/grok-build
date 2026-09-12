@@ -173,6 +173,12 @@ pub enum NotificationSource {
         server: String,
         message_id: String,
     },
+    /// Peer Grok conversation (`sessions_send`).
+    Session {
+        from_session: String,
+        from_title: Option<String>,
+        message_id: String,
+    },
 }
 impl NotificationSource {
     pub fn task_id(&self) -> &str {
@@ -180,7 +186,7 @@ impl NotificationSource {
             Self::MonitorEvent { task_id }
             | Self::MonitorCompleted { task_id }
             | Self::BashTaskCompleted { task_id } => task_id,
-            Self::Channel { message_id, .. } => message_id,
+            Self::Channel { message_id, .. } | Self::Session { message_id, .. } => message_id,
         }
     }
 }

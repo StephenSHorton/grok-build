@@ -60,9 +60,9 @@ impl SessionActor {
             .filter_map(|notification| match &notification.source {
                 NotificationSource::BashTaskCompleted { task_id }
                 | NotificationSource::MonitorCompleted { task_id } => Some(task_id.clone()),
-                NotificationSource::MonitorEvent { .. } | NotificationSource::Channel { .. } => {
-                    None
-                }
+                NotificationSource::MonitorEvent { .. }
+                | NotificationSource::Channel { .. }
+                | NotificationSource::Session { .. } => None,
             })
             .collect();
         completion_ids.sort();
@@ -80,7 +80,7 @@ impl SessionActor {
                 NotificationSource::MonitorEvent { task_id } => {
                     deferred_ids.contains(task_id.as_str())
                 }
-                NotificationSource::Channel { .. } => false,
+                NotificationSource::Channel { .. } | NotificationSource::Session { .. } => false,
             };
             if consume {
                 deferred.push(notification);
@@ -642,8 +642,18 @@ impl SessionActor {
         notifications: Vec<PendingNotification>,
     ) -> (Vec<PendingNotification>, usize) {
         if suppress_all {
-            let dropped = notifications.len();
-            return (Vec::new(), dropped);
+            let mut dropped = 0usize;
+            let to_surface = notifications
+                .into_iter()
+                .filter(|n| {
+                    let keep = matches!(n.source, NotificationSource::Session { .. });
+                    if !keep {
+                        dropped += 1;
+                    }
+                    keep
+                })
+                .collect();
+            return (to_surface, dropped);
         }
         let mut dropped = 0usize;
         let to_surface = notifications
@@ -671,7 +681,8 @@ impl SessionActor {
                 NotificationSource::MonitorCompleted { task_id } => Some(task_id.as_str()),
                 NotificationSource::MonitorEvent { .. }
                 | NotificationSource::BashTaskCompleted { .. }
-                | NotificationSource::Channel { .. } => None,
+                | NotificationSource::Channel { .. }
+                | NotificationSource::Session { .. } => None,
             })
             .collect();
         let mut monitor_events: Vec<MonitorEventNotification> = Vec::new();
@@ -704,7 +715,8 @@ impl SessionActor {
                 }
                 NotificationSource::MonitorCompleted { .. }
                 | NotificationSource::BashTaskCompleted { .. }
-                | NotificationSource::Channel { .. } => {
+                | NotificationSource::Channel { .. }
+                | NotificationSource::Session { .. } => {
                     sections.push(notification.prompt_blocks.clone());
                 }
             }
@@ -730,12 +742,30 @@ impl SessionActor {
         blocks
     }
 
-    /// Merge notifications into one queued `NotificationDrain` turn.
+    /// Merge notifications into queued turns. Peer session mail is its own visible turn;
+    /// monitor/channel/bash wakes stay a hidden `NotificationDrain` batch.
     pub(super) fn drain_notifications_into_turn(
         state: &mut State,
         notifications: Vec<PendingNotification>,
         task_output_tool_name: &str,
     ) -> bool {
+        let mut peer = Vec::new();
+        let mut rest = Vec::new();
+        for n in notifications {
+            match &n.source {
+                NotificationSource::Session { .. } => peer.push(n),
+                _ => rest.push(n),
+            }
+        }
+        let mut drained = false;
+        for n in peer {
+            Self::queue_peer_session_turn(state, n);
+            drained = true;
+        }
+        if rest.is_empty() {
+            return drained;
+        }
+        let notifications = rest;
         let merged_blocks = Self::notification_blocks(&notifications, task_output_tool_name);
 
         let merged_prompt_id = format!("notifications-{}", uuid::Uuid::now_v7());
@@ -778,11 +808,63 @@ impl SessionActor {
                 NotificationSource::Channel { server, message_id } => {
                     format!("channel:{server}:{message_id}")
                 }
+                NotificationSource::Session {
+                    from_session,
+                    message_id,
+                    ..
+                } => format!("session:{from_session}:{message_id}"),
             }).collect::<Vec<_>>().join(","),
             "Drained pending notifications into single batched turn"
         );
 
         true
+    }
+
+    fn queue_peer_session_turn(state: &mut State, notification: PendingNotification) {
+        let (from_session, from_title, message_id) = match &notification.source {
+            NotificationSource::Session {
+                from_session,
+                from_title,
+                message_id,
+            } => (from_session.clone(), from_title.clone(), message_id.clone()),
+            _ => return,
+        };
+        let prompt_id = format!("peer-session-{message_id}");
+        let (respond_to, _) = tokio::sync::oneshot::channel();
+        state.pending_inputs.push_back(InputItem {
+            prompt_id,
+            prompt_blocks: notification.prompt_blocks,
+            prompt_mode: crate::session::plan_mode::PromptMode::Agent,
+            trace_gcs_config: None,
+            artifact_tracker: None,
+            client_identifier: None,
+            screen_mode: None,
+            verbatim: true,
+            json_schema: None,
+            input_origin: InputOrigin::new(super::PromptOrigin::PeerSession {
+                message_id: message_id.clone(),
+            }),
+            task_wake_fallback: None,
+            tool_overrides_update: None,
+            respond_to,
+            persist_ack: None,
+            parsed_prompt_tx: None,
+            initial_child_prompt_ready: None,
+            queue_meta: None,
+            queue_mutation_policy: QueueMutationPolicy::from_input_origin(&InputOrigin::new(
+                super::PromptOrigin::PeerSession {
+                    message_id: message_id.clone(),
+                },
+            )),
+            send_now: false,
+            traceparent: None,
+        });
+        tracing::info!(
+            from_session,
+            from_title = from_title.as_deref().unwrap_or(""),
+            message_id,
+            "Queued peer session mail as a visible turn"
+        );
     }
 
     /// Turn-end straggler sweep: monitor events buffered during the turn's final sampling step move to `pending_notifications`.

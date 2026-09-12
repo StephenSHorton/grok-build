@@ -253,7 +253,10 @@ impl BlockContent for ToolCallBlock {
     }
 
     fn is_groupable(&self) -> bool {
-        true
+        match self {
+            ToolCallBlock::SentMessage(b) if b.is_peer() => false,
+            _ => true,
+        }
     }
 
     fn image_references(&self) -> &[crate::prompt_images::ScrollbackImageRef] {

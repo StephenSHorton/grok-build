@@ -624,6 +624,10 @@ pub enum ToolOutput {
     SchedulerCreate(crate::implementations::grok_build::scheduler::create::SchedulerCreateOutput),
     SchedulerDelete(crate::implementations::grok_build::scheduler::delete::SchedulerDeleteOutput),
     SchedulerList(crate::implementations::grok_build::scheduler::list::SchedulerListOutput),
+    SessionsList(crate::implementations::grok_build::sessions::SessionsListOutput),
+    SessionsClaim(crate::implementations::grok_build::sessions::SessionsClaimOutput),
+    SessionsRelease(crate::implementations::grok_build::sessions::SessionsReleaseOutput),
+    SessionsSend(crate::implementations::grok_build::sessions::SessionsSendOutput),
     UpdateGoal(crate::implementations::grok_build::update_goal::UpdateGoalOutput),
     Workflow(crate::implementations::grok_build::workflow::WorkflowToolOutput),
     /// Dynamic output for runtime-registered tools (MCP, test tools, etc.)
@@ -979,6 +983,23 @@ impl ToolOutput {
                     serde_json::to_string_pretty(&o.tasks).unwrap_or_default()
                 }
             }
+            ToolOutput::SessionsList(o) => {
+                if o.sessions.is_empty() {
+                    "No Grok conversations in the session bus.".into()
+                } else {
+                    serde_json::to_string_pretty(&o.sessions).unwrap_or_default()
+                }
+            }
+            ToolOutput::SessionsClaim(o) => {
+                format!("Claimed role {} for session {}.", o.role, o.session_id)
+            }
+            ToolOutput::SessionsRelease(o) => {
+                format!("Released role {} from session {}.", o.role, o.session_id)
+            }
+            ToolOutput::SessionsSend(o) => format!(
+                "Sent to {} ({:?}, message {}).",
+                o.to_session, o.delivered, o.message_id
+            ),
             ToolOutput::UpdateGoal(o) => o.summary.clone(),
             ToolOutput::Workflow(o) => o.message.clone(),
             ToolOutput::Dynamic(v) => serde_json::to_string_pretty(&v.value).unwrap_or_default(),

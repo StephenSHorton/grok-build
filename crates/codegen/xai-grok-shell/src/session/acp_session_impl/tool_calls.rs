@@ -2473,6 +2473,30 @@ impl SessionActor {
                 vec![],
                 vec![],
             ),
+            ToolInput::SessionsList(_) => (
+                "List Grok conversations".to_string(),
+                acp::ToolKind::Other,
+                vec![],
+                vec![],
+            ),
+            ToolInput::SessionsClaim(ref c) => (
+                format!("Claim duty {}", c.role),
+                acp::ToolKind::Other,
+                vec![],
+                vec![],
+            ),
+            ToolInput::SessionsRelease(ref c) => (
+                format!("Release duty {}", c.role),
+                acp::ToolKind::Other,
+                vec![],
+                vec![],
+            ),
+            ToolInput::SessionsSend(ref s) => (
+                format!("Send to Grok conversation {}", s.to),
+                acp::ToolKind::Other,
+                vec![],
+                vec![],
+            ),
             #[allow(unreachable_patterns)]
             _ => (
                 "Tool call".to_string(),

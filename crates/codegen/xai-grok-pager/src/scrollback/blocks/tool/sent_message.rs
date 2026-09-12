@@ -55,6 +55,8 @@ pub enum SentMessageTarget {
     Parent,
     /// No spawn was seen for this id (foreign, agent-scoped, or empty), so the raw id is the only name available.
     Unresolved { subagent_id: String },
+    /// Sibling Grok conversation (`sessions_send`). Collapsed UI matches inbound peer mail.
+    Peer { label: String },
 }
 
 impl SentMessageTarget {
@@ -64,6 +66,14 @@ impl SentMessageTarget {
         match self {
             Self::Named { label, .. } => scrub_display(label),
             Self::Parent => Cow::Borrowed(PARENT_NOUN),
+            Self::Peer { label } => {
+                let id = scrub_display(label);
+                if id.is_empty() {
+                    Cow::Borrowed("grok chat")
+                } else {
+                    id
+                }
+            }
             Self::Unresolved { subagent_id } => {
                 let id = scrub_display(subagent_id);
                 match id.char_indices().nth_back(SHORT_ID_CHARS) {
@@ -83,7 +93,7 @@ impl SentMessageTarget {
     fn raw_id(&self) -> Option<&str> {
         match self {
             Self::Unresolved { subagent_id } if !subagent_id.is_empty() => Some(subagent_id),
-            Self::Unresolved { .. } | Self::Named { .. } | Self::Parent => None,
+            Self::Unresolved { .. } | Self::Named { .. } | Self::Parent | Self::Peer { .. } => None,
         }
     }
 }
@@ -164,6 +174,30 @@ impl SentMessageToolCallBlock {
         }
     }
 
+    pub fn peer(
+        presentation: SentMessagePresentation,
+        to: Option<String>,
+        text: Option<String>,
+    ) -> Self {
+        Self::new(
+            presentation,
+            Some(SentMessageInput {
+                target: SentMessageTarget::Peer {
+                    label: to.unwrap_or_else(|| "grok chat".into()),
+                },
+                delivery: None,
+                text: text.unwrap_or_default(),
+            }),
+        )
+    }
+
+    pub(crate) fn is_peer(&self) -> bool {
+        matches!(
+            self.input.as_ref().map(|input| &input.target),
+            Some(SentMessageTarget::Peer { .. })
+        )
+    }
+
     /// One line for export and search: label, verb, target. Never the text, the reason, or a raw id behind a label.
     pub(crate) fn header_text(&self) -> String {
         format!("{HEADER_LABEL}{}", self.verb_and_target())
@@ -196,7 +230,9 @@ impl SentMessageToolCallBlock {
             SentMessageTarget::Named {
                 child_session_id, ..
             } => Some(child_session_id),
-            SentMessageTarget::Parent | SentMessageTarget::Unresolved { .. } => None,
+            SentMessageTarget::Parent
+            | SentMessageTarget::Unresolved { .. }
+            | SentMessageTarget::Peer { .. } => None,
         }
     }
 
@@ -338,10 +374,69 @@ fn scrub_display(text: &str) -> Cow<'_, str> {
     }
 }
 
+impl SentMessageToolCallBlock {
+    fn peer_collapsed_lines(&self, theme: &Theme, width: u16) -> Vec<BlockLine> {
+        const MAX_LINES: usize = 3;
+        let dest = self
+            .input
+            .as_ref()
+            .map(|input| input.target.noun())
+            .unwrap_or(Cow::Borrowed("grok chat"));
+        let prefix = format!("\u{2192} {dest}  \u{00b7}  ");
+        let prefix_style = theme.fg(theme.accent_skill);
+        let body_style = match &self.presentation {
+            SentMessagePresentation::Rejected { .. } => theme.fg(theme.accent_error),
+            _ => theme.fg(theme.text_primary),
+        };
+        let prefix_width = unicode_width::UnicodeWidthStr::width(prefix.as_str());
+        let indent = " ".repeat(prefix_width);
+        let wrap = RtOptions::new((width as usize).max(prefix_width + 8))
+            .initial_indent(Line::from(Span::styled(prefix, prefix_style)))
+            .subsequent_indent(Line::from(Span::styled(indent, prefix_style)));
+        let body = self
+            .input
+            .as_ref()
+            .map(|input| input.text.as_str())
+            .unwrap_or("")
+            .trim();
+        let source = if body.is_empty() {
+            vec![Line::from(Span::styled("\u{2026}".to_owned(), body_style))]
+        } else {
+            body.split('\n')
+                .map(|line| Line::from(Span::styled(line.to_owned(), body_style)))
+                .collect()
+        };
+        let (wrapped, _joiners) = word_wrap_lines_with_joiners(source, wrap);
+        let truncated = wrapped.len() > MAX_LINES;
+        let mut lines: Vec<BlockLine> = wrapped
+            .into_iter()
+            .take(MAX_LINES)
+            .map(BlockLine::styled)
+            .collect();
+        if truncated && let Some(last) = lines.last_mut() {
+            last.content
+                .spans
+                .push(Span::styled(" \u{2026}".to_owned(), body_style));
+        }
+        if lines.is_empty() {
+            lines.push(BlockLine::styled(Line::from(Span::styled(
+                format!("\u{2192} {dest}"),
+                prefix_style,
+            ))));
+        }
+        lines
+    }
+}
+
 impl BlockContent for SentMessageToolCallBlock {
     fn output(&self, ctx: &BlockContext) -> BlockOutput {
         let theme = Theme::current();
         if ctx.mode == DisplayMode::Collapsed {
+            if self.is_peer() {
+                return BlockOutput {
+                    lines: self.peer_collapsed_lines(&theme, ctx.width),
+                };
+            }
             return BlockOutput {
                 lines: vec![self.collapsed_line(ctx, &theme).into()],
             };
