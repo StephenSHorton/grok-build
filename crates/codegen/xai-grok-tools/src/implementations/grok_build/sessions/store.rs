@@ -1,19 +1,21 @@
-//! On-disk session bus: roster, exclusive roles, mailbox, live sockets.
+//! On-disk session bus: roster, exclusive roles, mailbox, live inject.
 //!
 //! Layout under `root` (default `$GROK_HOME/bus`):
 //! ```text
 //! roster.json
 //! roles.json
 //! bus.lock
-//! live/<session-id>.sock
+//! live/<session-id>.sock      # unix domain socket (unix only)
 //! mail/<session-id>/<message-id>.json
 //! ```
+//!
+//! Windows live inject uses `\\.\pipe\grok-bus-<id>` (named pipes do not appear
+//! under `live/`). `is_live` probes the pipe with `WaitNamedPipeW`.
 
 use std::collections::BTreeMap;
+use std::ffi::OsString;
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, Read};
-#[cfg(unix)]
-use std::io::Write;
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
 use fs2::FileExt;
@@ -146,6 +148,30 @@ impl SessionBus {
             .join(format!("{}.sock", sanitize_session_id(session_id)?)))
     }
 
+    /// Windows named-pipe path (`\\.\pipe\grok-bus-<id>`). Unix callers do not use this.
+    pub fn live_pipe_name(&self, session_id: &str) -> BusResult<OsString> {
+        let _ = self;
+        let id = sanitize_session_id(session_id)?;
+        let mut name = OsString::from(r"\\.\pipe\");
+        name.push(format!("grok-bus-{id}"));
+        Ok(name)
+    }
+
+    fn live_inject_endpoint(&self, session_id: &str) -> BusResult<PathBuf> {
+        #[cfg(unix)]
+        {
+            self.live_socket_path(session_id)
+        }
+        #[cfg(windows)]
+        {
+            Ok(PathBuf::from(self.live_pipe_name(session_id)?))
+        }
+        #[cfg(not(any(unix, windows)))]
+        {
+            self.live_socket_path(session_id)
+        }
+    }
+
     fn lock(&self) -> io::Result<File> {
         let path = self.root.join("bus.lock");
         let mut options = OpenOptions::new();
@@ -268,10 +294,22 @@ impl SessionBus {
     }
 
     pub fn is_live(&self, session_id: &str) -> bool {
-        let Ok(sock) = self.live_socket_path(session_id) else {
-            return false;
-        };
-        sock.exists()
+        #[cfg(unix)]
+        {
+            self.live_socket_path(session_id)
+                .map(|p| p.exists())
+                .unwrap_or(false)
+        }
+        #[cfg(windows)]
+        {
+            self.live_pipe_name(session_id)
+                .ok()
+                .is_some_and(|name| named_pipe_is_ready(&name))
+        }
+        #[cfg(not(any(unix, windows)))]
+        {
+            false
+        }
     }
 
     pub fn prune_dead(&self) -> BusResult<()> {
@@ -282,12 +320,11 @@ impl SessionBus {
         let mut roster = self.read_roster()?;
         let mut dirty = false;
         for entry in roster.sessions.values_mut() {
-            let sock_gone = self
-                .live_socket_path(&entry.session_id)
-                .map(|p| !p.exists())
-                .unwrap_or(true);
+            let live = self.is_live(&entry.session_id);
             let pid_dead = entry.pid.is_some_and(|pid| !pid_is_alive(pid));
-            if pid_dead || (entry.pid.is_some() && sock_gone) {
+            // Do not treat a missing listener as death while the pid is still
+            // alive: Windows has no sock file, and unix bind happens after register.
+            if pid_dead && !live {
                 if let Ok(sock) = self.live_socket_path(&entry.session_id) {
                     let _ = fs::remove_file(sock);
                 }
@@ -478,7 +515,7 @@ impl SessionBus {
     /// Try a live inject; on failure enqueue mailbox. Returns how it was delivered.
     pub fn send(&self, to_session: &str, msg: &PeerMessage) -> BusResult<Delivery> {
         if self.is_live(to_session) {
-            match write_live_frame(&self.live_socket_path(to_session)?, msg) {
+            match write_live_frame(&self.live_inject_endpoint(to_session)?, msg) {
                 Ok(()) => return Ok(Delivery::Inject),
                 Err(err) => {
                     tracing::debug!(
@@ -486,7 +523,15 @@ impl SessionBus {
                         session = to_session,
                         "live inject failed; falling back to mailbox"
                     );
-                    let _ = fs::remove_file(self.live_socket_path(to_session)?);
+                    #[cfg(unix)]
+                    {
+                        if matches!(
+                            err.kind(),
+                            io::ErrorKind::NotFound | io::ErrorKind::ConnectionRefused
+                        ) {
+                            let _ = fs::remove_file(self.live_socket_path(to_session)?);
+                        }
+                    }
                 }
             }
         }
@@ -594,33 +639,113 @@ fn pid_is_alive(pid: u32) -> bool {
     {
         nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), None).is_ok()
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        use windows::Win32::Foundation::{CloseHandle, WAIT_TIMEOUT};
+        use windows::Win32::System::Threading::{
+            OpenProcess, PROCESS_SYNCHRONIZE, WaitForSingleObject,
+        };
+        let Ok(handle) = (unsafe { OpenProcess(PROCESS_SYNCHRONIZE, false, pid) }) else {
+            return false;
+        };
+        let wait_result = unsafe { WaitForSingleObject(handle, 0) };
+        let _ = unsafe { CloseHandle(handle) };
+        wait_result == WAIT_TIMEOUT
+    }
+    #[cfg(not(any(unix, windows)))]
     {
         let _ = pid;
         false
     }
 }
 
-pub fn write_live_frame(sock: &Path, msg: &PeerMessage) -> io::Result<()> {
+#[cfg(windows)]
+fn named_pipe_is_ready(name: &std::ffi::OsStr) -> bool {
+    use std::os::windows::ffi::OsStrExt;
+
+    use windows::Win32::Foundation::{ERROR_FILE_NOT_FOUND, GetLastError};
+    use windows::Win32::System::Pipes::WaitNamedPipeW;
+    use windows::core::PCWSTR;
+
+    const PROBE_TIMEOUT_MS: u32 = 1;
+    let wide: Vec<u16> = name.encode_wide().chain(std::iter::once(0)).collect();
+    if unsafe { WaitNamedPipeW(PCWSTR(wide.as_ptr()), PROBE_TIMEOUT_MS) }.as_bool() {
+        return true;
+    }
+    let err = unsafe { GetLastError() };
+    err != ERROR_FILE_NOT_FOUND
+}
+
+pub fn write_live_frame(endpoint: &Path, msg: &PeerMessage) -> io::Result<()> {
+    let bytes = serde_json::to_vec(msg).map_err(io::Error::other)?;
+    let len = u32::try_from(bytes.len())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "peer message too large"))?;
     #[cfg(unix)]
     {
-        let mut stream = std::os::unix::net::UnixStream::connect(sock)?;
-        let bytes = serde_json::to_vec(msg).map_err(io::Error::other)?;
-        let len = u32::try_from(bytes.len())
-            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "peer message too large"))?;
+        let mut stream = std::os::unix::net::UnixStream::connect(endpoint)?;
         stream.write_all(&len.to_be_bytes())?;
         stream.write_all(&bytes)?;
         stream.flush()?;
         Ok(())
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
     {
-        let _ = (sock, msg);
+        write_windows_pipe_frame(endpoint, &len.to_be_bytes(), &bytes)
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = (endpoint, bytes, len);
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
-            "live inject requires unix sockets",
+            "live inject requires unix sockets or windows named pipes",
         ))
     }
+}
+
+#[cfg(windows)]
+fn write_windows_pipe_frame(endpoint: &Path, len: &[u8], body: &[u8]) -> io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use std::thread;
+    use std::time::Duration;
+
+    use windows::Win32::Foundation::ERROR_PIPE_BUSY;
+    use windows::Win32::System::Pipes::WaitNamedPipeW;
+    use windows::core::PCWSTR;
+
+    const ATTEMPTS: usize = 40;
+    const BUSY: i32 = ERROR_PIPE_BUSY.0 as i32;
+    let wide: Vec<u16> = endpoint
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    for _ in 0..ATTEMPTS {
+        unsafe {
+            let _ = WaitNamedPipeW(PCWSTR(wide.as_ptr()), 50);
+        }
+        match OpenOptions::new().read(true).write(true).open(endpoint) {
+            Ok(mut f) => {
+                f.write_all(len)?;
+                f.write_all(body)?;
+                f.flush()?;
+                return Ok(());
+            }
+            Err(err)
+                if err.raw_os_error() == Some(BUSY)
+                    || matches!(
+                        err.kind(),
+                        io::ErrorKind::NotFound | io::ErrorKind::WouldBlock
+                    ) =>
+            {
+                thread::sleep(Duration::from_millis(25));
+            }
+            Err(err) => return Err(err),
+        }
+    }
+    Err(io::Error::new(
+        io::ErrorKind::TimedOut,
+        "named pipe busy or missing",
+    ))
 }
 
 pub fn read_live_frame(mut reader: impl Read) -> io::Result<PeerMessage> {
@@ -696,23 +821,43 @@ mod tests {
     fn exclusive_claim_blocks_second_live_holder() {
         let (_dir, bus) = bus();
         #[cfg(unix)]
-        {
+        let _keep_live = {
             let sock = bus.live_socket_path("sess-a").unwrap();
-            let _listener = std::os::unix::net::UnixListener::bind(&sock).unwrap();
-            bus.register("sess-a", None, None, None, Some(std::process::id()))
+            std::os::unix::net::UnixListener::bind(&sock).unwrap()
+        };
+        #[cfg(windows)]
+        let _keep_live = {
+            let name = bus.live_pipe_name("sess-a").unwrap();
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
                 .unwrap();
-            bus.claim("sess-a", "pr-reviews").unwrap();
-            bus.register("sess-b", None, None, None, Some(std::process::id()))
-                .unwrap();
-            let err = bus.claim("sess-b", "pr-reviews").unwrap_err();
-            match err {
-                BusError::RoleHeld { role, session_id } => {
-                    assert_eq!(role, "pr-reviews");
-                    assert_eq!(session_id, "sess-a");
-                }
-                other => panic!("expected RoleHeld, got {other:?}"),
+            rt.block_on(async {
+                tokio::net::windows::named_pipe::ServerOptions::new()
+                    .first_pipe_instance(true)
+                    .create(&name)
+                    .unwrap()
+            })
+        };
+        bus.register("sess-a", None, None, None, Some(std::process::id()))
+            .unwrap();
+        bus.claim("sess-a", "pr-reviews").unwrap();
+        bus.register("sess-b", None, None, None, Some(std::process::id()))
+            .unwrap();
+        let err = bus.claim("sess-b", "pr-reviews").unwrap_err();
+        match err {
+            BusError::RoleHeld { role, session_id } => {
+                assert_eq!(role, "pr-reviews");
+                assert_eq!(session_id, "sess-a");
             }
+            other => panic!("expected RoleHeld, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn pid_is_alive_reports_current_process() {
+        assert!(pid_is_alive(std::process::id()));
+        assert!(!pid_is_alive(0));
     }
 
     #[test]
@@ -759,6 +904,44 @@ mod tests {
             read_live_frame(stream).unwrap()
         });
         thread::sleep(Duration::from_millis(20));
+        bus.register("sess-a", None, None, None, Some(std::process::id()))
+            .unwrap();
+        let outgoing = msg("sess-b", "please review");
+        let delivery = bus.send("sess-a", &outgoing).unwrap();
+        assert_eq!(delivery, Delivery::Inject);
+        let got = handle.join().unwrap();
+        assert_eq!(got.content, "please review");
+        assert_eq!(got.from_session, "sess-b");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn live_send_injects_one_frame() {
+        use tokio::io::AsyncReadExt;
+
+        let (_dir, bus) = bus();
+        let name = bus.live_pipe_name("sess-a").unwrap();
+        let handle = thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            rt.block_on(async {
+                let server = tokio::net::windows::named_pipe::ServerOptions::new()
+                    .first_pipe_instance(true)
+                    .create(&name)
+                    .unwrap();
+                server.connect().await.unwrap();
+                let mut len_buf = [0u8; 4];
+                let mut server = server;
+                server.read_exact(&mut len_buf).await.unwrap();
+                let len = u32::from_be_bytes(len_buf) as usize;
+                let mut buf = vec![0u8; len];
+                server.read_exact(&mut buf).await.unwrap();
+                serde_json::from_slice::<PeerMessage>(&buf).unwrap()
+            })
+        });
+        thread::sleep(Duration::from_millis(50));
         bus.register("sess-a", None, None, None, Some(std::process::id()))
             .unwrap();
         let outgoing = msg("sess-b", "please review");
