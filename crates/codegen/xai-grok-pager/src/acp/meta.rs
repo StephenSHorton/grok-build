@@ -61,6 +61,10 @@ pub mod user_prompt_meta {
     pub const DISPLAY_AS_SKILL: &str = "displayAsSkill";
     /// Render the display text as a scheduled (cron) prompt.
     pub const DISPLAY_AS_CRON: &str = "displayAsCron";
+    /// Render as inbound mail from another Grok conversation (`sessions_send`).
+    pub const DISPLAY_AS_PEER: &str = "displayAsPeer";
+    /// Title of the sending conversation (paired with `displayAsPeer`).
+    pub const PEER_FROM_TITLE: &str = "peerFromTitle";
     /// `[[start, end], …]` byte ranges of recognized slash tokens into the block's `text`.
     /// Only meaningful when that text is displayed verbatim (never stamped alongside `displayText`).
     pub const SKILL_TOKEN_RANGES: &str = "skillTokenRanges";

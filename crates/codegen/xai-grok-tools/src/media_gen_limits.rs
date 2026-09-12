@@ -65,6 +65,8 @@ pub fn max_calls_per_batch(kind: ToolKind, limits: &MediaGenBatchLimits) -> Opti
         | ToolKind::GoalUpdate
         | ToolKind::Workflow
         | ToolKind::Feedback
+        | ToolKind::SessionsList
+        | ToolKind::SessionsSend
         | ToolKind::Other => None,
     }
 }

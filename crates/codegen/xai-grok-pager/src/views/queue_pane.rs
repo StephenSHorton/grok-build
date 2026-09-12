@@ -54,7 +54,7 @@ impl ServerRowCapabilities {
     const PROTECTED: Self = Self { can_mutate: false };
 
     pub(crate) fn from_wire_kind(kind: &str) -> Self {
-        if kind == "parent_agent_message" {
+        if kind == "parent_agent_message" || kind == "peer_session" {
             Self::PROTECTED
         } else {
             Self::EDITABLE

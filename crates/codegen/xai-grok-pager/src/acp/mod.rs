@@ -4,6 +4,7 @@
 pub mod leader_bridge;
 pub mod meta;
 pub mod model_state;
+mod peer_send;
 pub mod spawn;
 mod subagent_message;
 pub mod tracker;

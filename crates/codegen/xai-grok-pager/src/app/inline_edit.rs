@@ -67,7 +67,11 @@ impl AgentView {
             return false;
         };
         // Interjections resolve to the enclosing turn's index; editing one would rewind the wrong prompt
-        if block.is_bash || block.is_cron || block.is_interjection {
+        if block.is_bash
+            || block.is_cron
+            || block.is_interjection
+            || block.peer_from_title.is_some()
+        {
             return false;
         }
         let entry_id = entry.id;

@@ -96,6 +96,8 @@ pub enum ToolKind {
     GoalUpdate,
     Workflow,
     Feedback,
+    SessionsList,
+    SessionsSend,
     #[serde(other)]
     Other,
 }

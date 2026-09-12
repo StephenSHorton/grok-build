@@ -85,6 +85,8 @@ pub struct UserPromptBlock {
     /// Renders identically to a typed prompt but is excluded from shell prompt-index bookkeeping.
     /// The shell numbers only turn-starting prompts, so counting interjections would skew the positional prompt-to-entry mapping rewind uses.
     pub is_interjection: bool,
+    /// Sibling Grok conversation that sent this text (`sessions_send`). Not a user-typed prompt.
+    pub peer_from_title: Option<String>,
     pub prompt_index: Option<usize>,
     /// Sanitized byte ranges into `text` rendered in the skill accent color (recognized `/command` tokens).
     /// Empty means plain prompt styling.
@@ -93,15 +95,20 @@ pub struct UserPromptBlock {
 }
 
 impl UserPromptBlock {
-    pub fn new(text: impl Into<String>) -> Self {
+    fn blank(text: String) -> Self {
         Self {
-            text: text.into(),
+            text,
             is_bash: false,
             is_cron: false,
             is_interjection: false,
+            peer_from_title: None,
             prompt_index: None,
             skill_token_ranges: Vec::new(),
         }
+    }
+
+    pub fn new(text: impl Into<String>) -> Self {
+        Self::blank(text.into())
     }
 
     pub fn copy_text(&self) -> String {
@@ -110,12 +117,8 @@ impl UserPromptBlock {
 
     pub fn bash(text: impl Into<String>) -> Self {
         Self {
-            text: text.into(),
             is_bash: true,
-            is_cron: false,
-            is_interjection: false,
-            prompt_index: None,
-            skill_token_ranges: Vec::new(),
+            ..Self::blank(text.into())
         }
     }
 
@@ -133,12 +136,8 @@ impl UserPromptBlock {
             Vec::new()
         };
         Self {
-            text,
-            is_bash: false,
-            is_cron: false,
-            is_interjection: false,
-            prompt_index: None,
             skill_token_ranges,
+            ..Self::blank(text)
         }
     }
 
@@ -148,34 +147,38 @@ impl UserPromptBlock {
         let text = text.into();
         let skill_token_ranges = sanitize_token_ranges(&text, ranges);
         Self {
-            text,
-            is_bash: false,
-            is_cron: false,
-            is_interjection: false,
-            prompt_index: None,
             skill_token_ranges,
+            ..Self::blank(text)
         }
     }
 
     pub fn cron(text: impl Into<String>) -> Self {
         Self {
-            text: text.into(),
-            is_bash: false,
             is_cron: true,
-            is_interjection: false,
-            prompt_index: None,
-            skill_token_ranges: Vec::new(),
+            ..Self::blank(text.into())
         }
     }
 
     pub fn interjection(text: impl Into<String>) -> Self {
         Self {
-            text: text.into(),
-            is_bash: false,
-            is_cron: false,
             is_interjection: true,
-            prompt_index: None,
-            skill_token_ranges: Vec::new(),
+            ..Self::blank(text.into())
+        }
+    }
+
+    /// Inbound mail from another Grok conversation. Collapsed one-liner; expand for the full body.
+    pub fn peer(from_title: impl Into<String>, text: impl Into<String>) -> Self {
+        let mut title = from_title.into();
+        if title.trim().is_empty()
+            || xai_grok_tools::implementations::grok_build::sessions::looks_like_session_id(&title)
+        {
+            title = "grok chat".into();
+        } else if title.chars().count() > 32 {
+            title = title.chars().take(31).collect::<String>() + "\u{2026}";
+        }
+        Self {
+            peer_from_title: Some(title),
+            ..Self::blank(text.into())
         }
     }
 
@@ -238,12 +241,19 @@ impl UserPromptBlock {
         let attribute_emphasis = !terminal_native && crate::theme::cache::terminal_native_active();
         let (mut prefix_style, mut text_style, mut skill_style) =
             Self::prompt_styles(&theme, terminal_native);
+        if self.peer_from_title.is_some() {
+            prefix_style = theme.fg(theme.accent_skill);
+        }
         if attribute_emphasis {
             prefix_style = prefix_style.add_modifier(Modifier::BOLD);
             text_style = text_style.add_modifier(Modifier::BOLD);
             skill_style = skill_style.add_modifier(Modifier::BOLD);
         }
-        let band = Self::prompt_band_color_for(&theme, is_selected, terminal_native);
+        let band = if self.peer_from_title.is_some() {
+            None
+        } else {
+            Self::prompt_band_color_for(&theme, is_selected, terminal_native)
+        };
         // Semantic line bg (not a "panel") so it survives minimal's flat_background.
         // Bandless prompts (terminal theme) carry no extra selected cue: the
         // rewind picker and the dimmed tail already mark the target.
@@ -254,8 +264,14 @@ impl UserPromptBlock {
             }
         };
 
+        let peer_prefix = self
+            .peer_from_title
+            .as_ref()
+            .map(|title| format!("\u{2190} {title}  \u{00b7}  "));
         let prefix = if !show_prefix {
             ""
+        } else if let Some(p) = peer_prefix.as_deref() {
+            p
         } else if self.is_bash {
             "$ "
         } else if self.is_cron {
@@ -452,7 +468,7 @@ impl BlockContent for UserPromptBlock {
         let lines = self.wrap_prompt_lines(
             ctx.width,
             max_lines,
-            prompt_cfg.show_prefix && !compact,
+            self.peer_from_title.is_some() || (prompt_cfg.show_prefix && !compact),
             ctx.is_selected,
         );
 
@@ -468,11 +484,19 @@ impl BlockContent for UserPromptBlock {
     }
 
     fn background(&self, ctx: &BlockContext) -> BlockBackground {
-        ctx.appearance.scrollback.blocks.prompt.bg
+        if self.peer_from_title.is_some() {
+            BlockBackground::None
+        } else {
+            ctx.appearance.scrollback.blocks.prompt.bg
+        }
     }
 
     fn has_vpad_for(&self, appearance: &AppearanceConfig) -> bool {
-        appearance.scrollback.blocks.prompt.vpad && !appearance.prompt.compact
+        if self.peer_from_title.is_some() {
+            false
+        } else {
+            appearance.scrollback.blocks.prompt.vpad && !appearance.prompt.compact
+        }
     }
 
     fn has_raw_mode(&self) -> bool {
@@ -480,6 +504,9 @@ impl BlockContent for UserPromptBlock {
     }
 
     fn is_foldable(&self) -> bool {
+        if self.peer_from_title.is_some() {
+            return true;
+        }
         // Estimate visual line count to catch long single-line prompts that wrap past the limit. Uses a conservative
         // content width (terminal width minus prefix/padding). at wider terminals we may slightly over-report foldability,
         // which is harmless.
@@ -500,7 +527,7 @@ impl BlockContent for UserPromptBlock {
     }
 
     fn default_display_mode(&self) -> DisplayMode {
-        if self.is_foldable() {
+        if self.peer_from_title.is_some() || self.is_foldable() {
             DisplayMode::Collapsed
         } else {
             DisplayMode::Expanded
@@ -522,6 +549,20 @@ mod tests {
     /// Concatenated text content of a line (styles excluded)
     fn line_text(line: &Line) -> String {
         line.spans.iter().map(|s| s.content.as_ref()).collect()
+    }
+
+    #[test]
+    fn peer_row_prefix_includes_sender_title() {
+        let _guard = crate::theme::cache::pin_theme();
+        let block = UserPromptBlock::peer("inter-grok-chats", "hello from peer");
+        let lines = block.wrap_prompt_lines(80, Some(1), true, false);
+        assert_eq!(lines.len(), 1);
+        let text = line_text(&lines[0].content);
+        assert!(
+            text.starts_with("\u{2190} inter-grok-chats  \u{00b7}  hello from peer"),
+            "peer row was {text:?}"
+        );
+        assert!(!text.contains("<channel"));
     }
 
     #[test]

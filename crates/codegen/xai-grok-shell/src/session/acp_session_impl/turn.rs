@@ -1171,7 +1171,8 @@ impl SessionActor {
                     ConversationItem::subagent_completed(user_message)
                 }
                 super::super::PromptOrigin::ParentAgentMessage { .. }
-                | super::super::PromptOrigin::ParentHumanMessage { .. } => {
+                | super::super::PromptOrigin::ParentHumanMessage { .. }
+                | super::super::PromptOrigin::PeerSession { .. } => {
                     ConversationItem::agent_message(user_message)
                 }
                 super::super::PromptOrigin::WorkflowCompleted { .. } => {
@@ -4064,6 +4065,10 @@ mod user_echo_broadcast_tests {
         );
         assert_eq!(
             user_echo_mode("subagent-completed-xyz", &origin("subagent-completed-xyz")),
+            UserEchoMode::Broadcast
+        );
+        assert_eq!(
+            user_echo_mode("peer-session-m1", &origin("peer-session-m1")),
             UserEchoMode::Broadcast
         );
     }

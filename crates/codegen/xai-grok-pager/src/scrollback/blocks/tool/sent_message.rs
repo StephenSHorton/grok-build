@@ -73,6 +73,8 @@ enum MessageDetailStyle {
 pub struct SentMessageToolCallBlock {
     pub presentation: SentMessagePresentation,
     pub subagent_id: Option<String>,
+    /// Sibling Grok conversation destination (`sessions_send`). When set, collapsed UI matches inbound peer mail.
+    pub peer_to: Option<String>,
     pub text: Option<String>,
     pub started_at: Option<std::time::Instant>,
     pub elapsed_ms: Option<i64>,
@@ -87,9 +89,42 @@ impl SentMessageToolCallBlock {
         Self {
             presentation,
             subagent_id,
+            peer_to: None,
             text,
             started_at: None,
             elapsed_ms: None,
+        }
+    }
+
+    pub fn peer(
+        presentation: SentMessagePresentation,
+        to: Option<String>,
+        text: Option<String>,
+    ) -> Self {
+        Self {
+            presentation,
+            subagent_id: None,
+            peer_to: to,
+            text,
+            started_at: None,
+            elapsed_ms: None,
+        }
+    }
+
+    fn is_peer(&self) -> bool {
+        self.peer_to.is_some()
+    }
+
+    pub(crate) fn header_title(&self) -> &'static str {
+        if self.is_peer() {
+            match &self.presentation {
+                SentMessagePresentation::Sending => "Sending to grok chat",
+                SentMessagePresentation::Sent => "Sent to grok chat",
+                SentMessagePresentation::Rejected { .. } => "Failed to send to grok chat",
+                SentMessagePresentation::Unconfirmed { .. } => "Delivery unconfirmed",
+            }
+        } else {
+            self.presentation.title()
         }
     }
 
@@ -122,8 +157,9 @@ impl SentMessageToolCallBlock {
 
     pub(crate) fn searchable_text(&self) -> Option<String> {
         crate::scrollback::block::join_searchable([
-            Some(self.presentation.title().to_owned()),
+            Some(self.header_title().to_owned()),
             self.subagent_id.clone(),
+            self.peer_to.clone(),
             self.text.clone(),
             self.presentation
                 .detail()
@@ -138,7 +174,50 @@ impl SentMessageToolCallBlock {
             theme.primary()
         }
         .add_modifier(ratatui::style::Modifier::BOLD);
-        Line::from(Span::styled(self.presentation.title(), style))
+        Line::from(Span::styled(self.header_title(), style))
+    }
+
+    fn peer_collapsed_lines(&self, theme: &Theme, width: u16) -> Vec<BlockLine> {
+        const MAX_LINES: usize = 3;
+        let dest = self.peer_to.as_deref().unwrap_or("grok chat");
+        let prefix = format!("\u{2192} {dest}  \u{00b7}  ");
+        let prefix_style = theme.fg(theme.accent_skill);
+        let body_style = match &self.presentation {
+            SentMessagePresentation::Rejected { .. } => theme.fg(theme.accent_error),
+            _ => theme.fg(theme.text_primary),
+        };
+        let prefix_width = unicode_width::UnicodeWidthStr::width(prefix.as_str());
+        let indent = " ".repeat(prefix_width);
+        let wrap = RtOptions::new((width as usize).max(prefix_width + 8))
+            .initial_indent(Line::from(Span::styled(prefix, prefix_style)))
+            .subsequent_indent(Line::from(Span::styled(indent, prefix_style)));
+        let body = self.text.as_deref().unwrap_or("").trim();
+        let source = if body.is_empty() {
+            vec![Line::from(Span::styled("\u{2026}".to_owned(), body_style))]
+        } else {
+            body.split('\n')
+                .map(|line| Line::from(Span::styled(line.to_owned(), body_style)))
+                .collect()
+        };
+        let (wrapped, _joiners) = word_wrap_lines_with_joiners(source, wrap);
+        let truncated = wrapped.len() > MAX_LINES;
+        let mut lines: Vec<BlockLine> = wrapped
+            .into_iter()
+            .take(MAX_LINES)
+            .map(BlockLine::styled)
+            .collect();
+        if truncated && let Some(last) = lines.last_mut() {
+            last.content
+                .spans
+                .push(Span::styled(" \u{2026}".to_owned(), body_style));
+        }
+        if lines.is_empty() {
+            lines.push(BlockLine::styled(Line::from(Span::styled(
+                format!("\u{2192} {dest}"),
+                prefix_style,
+            ))));
+        }
+        lines
     }
 
     pub(crate) fn rendered_output(&self, ctx: &BlockContext) -> RenderedBlockOutput {
@@ -192,6 +271,11 @@ impl BlockContent for SentMessageToolCallBlock {
         let is_muted =
             ctx.mute_when_collapsed(ctx.appearance.scrollback.blocks.tool.muted_collapsed);
         if ctx.mode == DisplayMode::Collapsed {
+            if self.is_peer() {
+                return BlockOutput {
+                    lines: self.peer_collapsed_lines(&theme, ctx.width),
+                };
+            }
             return BlockOutput {
                 lines: vec![self.header(&theme, is_muted).into()],
             };
@@ -218,13 +302,20 @@ impl BlockContent for SentMessageToolCallBlock {
         }
 
         lines.push(Line::from("").into());
+        let dest_label = if self.is_peer() {
+            "To: "
+        } else {
+            "Subagent ID: "
+        };
+        let dest_value = if self.is_peer() {
+            self.peer_to.as_deref()
+        } else {
+            self.subagent_id.as_deref()
+        };
         let id_wrap = RtOptions::new(width)
-            .initial_indent(Line::from(Span::styled("Subagent ID: ", theme.muted())));
+            .initial_indent(Line::from(Span::styled(dest_label, theme.muted())));
         let id_value = Line::from(Span::styled(
-            self.subagent_id
-                .as_deref()
-                .unwrap_or("unavailable")
-                .to_owned(),
+            dest_value.unwrap_or("unavailable").to_owned(),
             theme.primary(),
         ));
         let (wrapped_id, id_joiners) =
@@ -325,7 +416,10 @@ impl BlockContent for SentMessageToolCallBlock {
     }
 
     fn is_foldable(&self) -> bool {
-        self.subagent_id.is_some() || self.text.is_some() || self.presentation.detail().is_some()
+        self.subagent_id.is_some()
+            || self.peer_to.is_some()
+            || self.text.is_some()
+            || self.presentation.detail().is_some()
     }
 
     fn default_display_mode(&self) -> DisplayMode {

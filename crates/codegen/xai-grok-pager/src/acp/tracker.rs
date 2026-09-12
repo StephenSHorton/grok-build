@@ -1532,7 +1532,7 @@ impl AcpUpdateTracker {
             if text.contains("<command-name>") {
                 self.skip_next_skill_body = true;
             }
-            let (as_skill, as_cron) = match &chunk.content {
+            let (as_skill, as_cron, as_peer, peer_title) = match &chunk.content {
                 acp::ContentBlock::Text(t) => {
                     let m = t.meta.as_ref();
                     let skill = m
@@ -1543,11 +1543,24 @@ impl AcpUpdateTracker {
                         .and_then(|m| m.get(user_prompt_meta::DISPLAY_AS_CRON))
                         .and_then(|v| v.as_bool())
                         .unwrap_or(false);
-                    (skill, cron)
+                    let peer = m
+                        .and_then(|m| m.get(user_prompt_meta::DISPLAY_AS_PEER))
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+                    let title = m
+                        .and_then(|m| m.get(user_prompt_meta::PEER_FROM_TITLE))
+                        .and_then(|v| v.as_str())
+                        .map(str::to_string);
+                    (skill, cron, peer, title)
                 }
-                _ => (false, false),
+                _ => (false, false, false, None),
             };
-            if as_cron {
+            if as_peer {
+                crate::scrollback::blocks::UserPromptBlock::peer(
+                    peer_title.unwrap_or_else(|| "grok chat".into()),
+                    dt,
+                )
+            } else if as_cron {
                 crate::scrollback::blocks::UserPromptBlock::cron(dt)
             } else if as_skill {
                 crate::scrollback::blocks::UserPromptBlock::skill(dt)
@@ -2124,6 +2137,7 @@ fn tool_call_to_block(tc: &acp::ToolCall, session_cwd: Option<&Path>) -> RenderB
         _ if crate::acp::subagent_message::is_tool(tc) => {
             crate::acp::subagent_message::to_block(tc)
         }
+        _ if crate::acp::peer_send::is_tool(tc) => crate::acp::peer_send::to_block(tc),
         _ if canonical_tool_name(tc)
             == Some(xai_grok_tools::implementations::grok_build::SEND_FEEDBACK_TOOL_NAME) =>
         {

@@ -617,7 +617,11 @@ pub(crate) fn acp_tool_update(
         | ToolOutput::Monitor(_)
         | ToolOutput::SchedulerCreate(_)
         | ToolOutput::SchedulerDelete(_)
-        | ToolOutput::SchedulerList(_) => Some(acp::ToolCallUpdate::new(
+        | ToolOutput::SchedulerList(_)
+        | ToolOutput::SessionsList(_)
+        | ToolOutput::SessionsClaim(_)
+        | ToolOutput::SessionsRelease(_)
+        | ToolOutput::SessionsSend(_) => Some(acp::ToolCallUpdate::new(
             acp::ToolCallId::new(Arc::from(tool_call_id)),
             acp::ToolCallUpdateFields::new()
                 .status(Some(acp::ToolCallStatus::Completed))

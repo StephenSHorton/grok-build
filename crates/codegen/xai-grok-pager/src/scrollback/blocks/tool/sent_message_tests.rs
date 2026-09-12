@@ -10,6 +10,39 @@ use crate::scrollback::text_selection::{
 };
 use crate::scrollback::types::{BlockContext, RenderedBlockOutput, line_plain_text};
 
+#[test]
+fn peer_collapsed_row_matches_inbound_shape() {
+    let block = SentMessageToolCallBlock::peer(
+        SentMessagePresentation::Sent,
+        Some("pr-reviews".into()),
+        Some("please review the PR".into()),
+    );
+    let text = rendered(&block, 80, DisplayMode::Collapsed);
+    assert_eq!(text, "\u{2192} pr-reviews  \u{00b7}  please review the PR");
+}
+
+#[test]
+fn peer_collapsed_row_keeps_several_sentences() {
+    let body = "First sentence about the review. Second sentence with more context. Third sentence wrapping it up. Fourth should be cut.";
+    let block = SentMessageToolCallBlock::peer(
+        SentMessagePresentation::Sent,
+        Some("smoke".into()),
+        Some(body.into()),
+    );
+    let text = rendered(&block, 48, DisplayMode::Collapsed);
+    assert!(text.contains("First sentence"), "{text:?}");
+    assert!(text.contains("\u{2192} smoke"), "{text:?}");
+    assert!(
+        text.lines().count() <= 3,
+        "collapsed peer row should cap at 3 lines, got {text:?}"
+    );
+    let expanded = rendered(&block, 48, DisplayMode::Expanded);
+    assert!(
+        expanded.contains("Fourth should be cut"),
+        "expanded must include the rest: {expanded:?}"
+    );
+}
+
 fn context(width: u16, mode: DisplayMode) -> BlockContext {
     BlockContext {
         width,
