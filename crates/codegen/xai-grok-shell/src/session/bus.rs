@@ -1,5 +1,9 @@
 //! Live socket + mailbox drain so sibling sessions can inject turns.
+//!
+//! Live inject uses a unix domain socket. On Windows, send falls back to the
+//! mailbox and is drained when the target session starts.
 
+#[cfg(unix)]
 use tokio::io::AsyncReadExt;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -42,60 +46,62 @@ pub(crate) fn spawn_session_bus(
         return None;
     }
 
-    let sock = match bus.live_socket_path(&session_id) {
-        Ok(p) => p,
-        Err(err) => {
-            tracing::warn!(error = %err, "session bus: socket path");
-            return None;
-        }
-    };
-    let _ = std::fs::remove_file(&sock);
-    #[cfg(unix)]
-    let listener = match tokio::net::UnixListener::bind(&sock) {
-        Ok(l) => l,
-        Err(err) => {
-            tracing::warn!(error = %err, path = %sock.display(), "session bus: bind failed");
-            return None;
-        }
-    };
+    drain_mailbox_into(&bus, &session_id, &cmd_tx);
+
     #[cfg(not(unix))]
     {
-        let _ = (sock, cmd_tx);
-        drain_mailbox_into(&bus, &session_id, &cmd_tx);
+        let _ = cmd_tx;
         return Some(SessionBusGuard {
             session_id,
             cancel: CancellationToken::new(),
         });
     }
 
-    drain_mailbox_into(&bus, &session_id, &cmd_tx);
+    #[cfg(unix)]
+    {
+        let sock = match bus.live_socket_path(&session_id) {
+            Ok(p) => p,
+            Err(err) => {
+                tracing::warn!(error = %err, "session bus: socket path");
+                return None;
+            }
+        };
+        let _ = std::fs::remove_file(&sock);
+        let listener = match tokio::net::UnixListener::bind(&sock) {
+            Ok(l) => l,
+            Err(err) => {
+                tracing::warn!(error = %err, path = %sock.display(), "session bus: bind failed");
+                return None;
+            }
+        };
 
-    let cancel = CancellationToken::new();
-    let cancel_task = cancel.clone();
-    let sid = session_id.clone();
-    tokio::task::spawn_local(async move {
-        loop {
-            tokio::select! {
-                _ = cancel_task.cancelled() => break,
-                accepted = listener.accept() => {
-                    match accepted {
-                        Ok((stream, _)) => {
-                            if let Err(err) = ingest_stream(stream, &cmd_tx).await {
-                                tracing::debug!(error = %err, session = %sid, "session bus: ingest failed");
+        let cancel = CancellationToken::new();
+        let cancel_task = cancel.clone();
+        let sid = session_id.clone();
+        tokio::task::spawn_local(async move {
+            loop {
+                tokio::select! {
+                    _ = cancel_task.cancelled() => break,
+                    accepted = listener.accept() => {
+                        match accepted {
+                            Ok((stream, _)) => {
+                                if let Err(err) = ingest_stream(stream, &cmd_tx).await {
+                                    tracing::debug!(error = %err, session = %sid, "session bus: ingest failed");
+                                }
                             }
-                        }
-                        Err(err) => {
-                            tracing::debug!(error = %err, "session bus: accept failed");
-                            break;
+                            Err(err) => {
+                                tracing::debug!(error = %err, "session bus: accept failed");
+                                break;
+                            }
                         }
                     }
                 }
             }
-        }
-        let _ = std::fs::remove_file(&sock);
-    });
+            let _ = std::fs::remove_file(&sock);
+        });
 
-    Some(SessionBusGuard { session_id, cancel })
+        Some(SessionBusGuard { session_id, cancel })
+    }
 }
 
 fn drain_mailbox_into(
