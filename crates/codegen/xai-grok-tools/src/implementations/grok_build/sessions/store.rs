@@ -11,7 +11,9 @@
 
 use std::collections::BTreeMap;
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, Read, Write};
+use std::io::{self, Read};
+#[cfg(unix)]
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use fs2::FileExt;
