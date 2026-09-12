@@ -4416,6 +4416,39 @@ fn replay_display_text_override() {
         other => panic!("expected UserPrompt, got {:?}", other),
     }
 }
+/// Peer session mail shows the sender title + body, not the `<channel>` XML.
+#[test]
+fn peer_session_mail_renders_collapsed_labeled_row() {
+    let mut sb = ScrollbackState::new();
+    let mut tracker = AcpUpdateTracker::new();
+    let xml = "<channel source=\"session\" from_session=\"abc\" from_title=\"inter-grok-chats\" message_id=\"m1\">\nhello from peer\n</channel>";
+    let mut meta_map = serde_json::Map::new();
+    meta_map.insert(
+        "displayText".into(),
+        serde_json::Value::String("hello from peer".into()),
+    );
+    meta_map.insert("displayAsPeer".into(), serde_json::Value::Bool(true));
+    meta_map.insert(
+        "peerFromTitle".into(),
+        serde_json::Value::String("inter-grok-chats".into()),
+    );
+    let update =
+        acp::SessionUpdate::UserMessageChunk(acp::ContentChunk::new(acp::ContentBlock::Text(
+            acp::TextContent::new(xml.to_string())
+                .meta(serde_json::Value::Object(meta_map).as_object().cloned()),
+        )));
+    assert!(tracker.handle_update(update, &meta_with_prompt_id("peer-session-m1"), &mut sb));
+    assert_eq!(sb.len(), 1);
+    let entry = sb.get(0).unwrap();
+    match &entry.block {
+        RenderBlock::UserPrompt(block) => {
+            assert_eq!(block.peer_from_title.as_deref(), Some("inter-grok-chats"));
+            assert_eq!(block.text, "hello from peer");
+            assert!(!block.text.contains("<channel"));
+        }
+        other => panic!("expected UserPrompt peer row, got {:?}", other),
+    }
+}
 /// displayText with displayAsSkill=false creates a regular prompt block.
 #[test]
 fn replay_display_text_non_skill() {
@@ -4574,10 +4607,18 @@ fn replay_hides_user_echo_by_origin_type() {
         "scheduler-fired must still render (cron path is separate)"
     );
     assert!(
+        tracker.handle_update(
+            user_message("peer body"),
+            &meta_with_prompt_id("peer-session-m1"),
+            &mut sb,
+        ),
+        "peer-session origin must render (not hidden like notification drain)"
+    );
+    assert!(
         tracker.handle_update(user_message("please check the CI status"), &meta(), &mut sb),
         "real user text must still render"
     );
-    assert_eq!(sb.len(), 2);
+    assert_eq!(sb.len(), 3);
     assert!(
         !tracker.handle_update(user_message(monitor_xml), &meta(), &mut sb),
         "legacy untyped monitor XML still suppressed"
@@ -4609,7 +4650,7 @@ fn replay_hides_user_echo_by_origin_type() {
         ),
         "digit anchor: user text with both phrases but no leading count still renders"
     );
-    assert_eq!(sb.len(), 3);
+    assert_eq!(sb.len(), 4);
 }
 /// Helper: UserMessageChunk with `skillTokenRanges` in content-block meta.
 fn user_message_with_token_ranges(text: &str, ranges: serde_json::Value) -> acp::SessionUpdate {

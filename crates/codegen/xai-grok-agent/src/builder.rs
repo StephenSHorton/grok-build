@@ -860,6 +860,8 @@ impl AgentBuilder {
                     Some(
                         xai_grok_tools::types::tool::ToolKind::AskUser
                             | xai_grok_tools::types::tool::ToolKind::Feedback
+                            | xai_grok_tools::types::tool::ToolKind::SessionsList
+                            | xai_grok_tools::types::tool::ToolKind::SessionsSend
                     )
                 ) && tool.id != feedback_id
                     && tool.id != feedback_name

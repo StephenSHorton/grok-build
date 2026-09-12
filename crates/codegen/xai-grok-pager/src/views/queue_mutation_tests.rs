@@ -10,6 +10,11 @@ fn capabilities_truth_table() {
             ServerRowCapabilities::PROTECTED,
         ),
         (
+            "peer_session",
+            QueueMutation::PerRowKind,
+            ServerRowCapabilities::PROTECTED,
+        ),
+        (
             "prompt",
             QueueMutation::PerRowKind,
             ServerRowCapabilities::EDITABLE,
