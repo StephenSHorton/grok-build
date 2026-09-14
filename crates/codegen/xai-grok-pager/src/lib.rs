@@ -26,6 +26,7 @@ pub mod export_cmd;
 pub(crate) mod fs_size;
 pub mod git_info;
 pub mod headless;
+pub mod host_split;
 pub mod hyperlink_route;
 pub mod inline_media_ffmpeg;
 pub mod input_log;

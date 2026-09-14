@@ -1437,6 +1437,8 @@ pub struct AgentView {
     pub(crate) pending_fork_banner: Option<PendingForkBanner>,
     /// Set when `session/load` failed, so this tab has no session and a plain prompt is refused with a notice.
     pub(crate) load_failed: bool,
+    /// When true, `ForkSessionReady` / `WorktreeForked` emit OSC 7880 and drop this placeholder instead of `LoadSession`.
+    pub(crate) host_split_pending: bool,
     /// Entry ID of the "Loading session ..." placeholder block pushed by `dispatch_load_session_inner`. Cleared by the `SessionLoaded`
     /// handler so the placeholder doesn't linger on screen when the loaded session has no replay content.
     pub(crate) loading_placeholder_id: Option<EntryId>,
