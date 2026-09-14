@@ -12,7 +12,8 @@
 #   4. rebase onto upstream/main, dropping later-reverted commit series
 #   5. force-with-lease push of a successful rebase so other machines can FF
 #   6. rebuild release binary only if rust sources changed (or binary missing)
-#   7. exec the fork binary with all args
+#   7. install scripts/home-rules/*.md into $GROK_HOME/rules (global Grok rules)
+#   8. exec the fork binary with all args
 #
 # Never changes the caller's working directory — git/cargo run under $REPO
 # via git -C / subshells so Grok opens in the directory you launched from.
@@ -439,6 +440,31 @@ rebuild_if_needed() {
   return 1
 }
 
+# Copy fork-managed markdown into $GROK_HOME/rules so every Grok session (fork
+# and official) loads it. Source of truth is $REPO/scripts/home-rules/.
+install_home_rules() {
+  local src="$REPO/scripts/home-rules"
+  local dest="${GROK_HOME:-$HOME/.grok}/rules"
+  [[ -d "$src" ]] || return 0
+  mkdir -p "$dest" 2>/dev/null || {
+    log "warning: could not create $dest — skipping home-rules install"
+    return 0
+  }
+  local f base
+  for f in "$src"/*.md; do
+    [[ -f "$f" ]] || continue
+    base=$(basename "$f")
+    if cmp -s "$f" "$dest/$base" 2>/dev/null; then
+      continue
+    fi
+    if cp "$f" "$dest/$base" 2>/dev/null; then
+      log "installed home rule $base"
+    else
+      log "warning: could not install home rule $base"
+    fi
+  done
+}
+
 launch() {
   if [[ ! -x "$BIN" ]]; then
     log "error: no fork binary at $BIN"
@@ -455,6 +481,7 @@ main() {
 
   if [[ ! -d "$REPO/.git" ]]; then
     log "warning: not a git repo at $REPO — launching binary only"
+    install_home_rules
     launch "$@"
   fi
 
@@ -476,6 +503,7 @@ main() {
     log "sync+rebuild skipped (GROK_SKIP_SYNC / GROK_SKIP_REBUILD)"
   fi
 
+  install_home_rules
   log "exec $BIN"
   launch "$@"
 }
