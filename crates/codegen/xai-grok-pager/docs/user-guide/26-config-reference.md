@@ -291,6 +291,7 @@ User-level configuration lives in `$GROK_HOME/config.toml` (default `~/.grok/con
 | --- | --- | --- | --- | --- |
 | `hints.fork_worktree_mode` | `ask / always / never` | `yes` | `user` | Whether `/fork` offers a worktree. |
 | `hints.new_session_worktree_mode` | `ask / always / never` | `yes` | `user` | Whether `/new` offers a worktree. |
+| `hints.fork_host_split` | `auto / never` | `yes` | `user` | Whether `/fork` asks suzuri to split a pane for the child session. |
 
 ### `hooks`
 

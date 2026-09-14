@@ -1432,6 +1432,8 @@ pub struct AgentView {
     /// Set by `dispatch_fork_resolved`; stores the parent session id and worktree flag so the banner can be formatted with the child's session id (not known until `SessionLoaded`). `None` for non-fork sessions.
     /// Cleared on all failure paths: `SessionLoadFailed`, `WorktreeSessionFailed` (non-orphan branch), and `ForkSessionFailed`.
     pub(crate) pending_fork_banner: Option<PendingForkBanner>,
+    /// When true, `ForkSessionReady` / `WorktreeForked` emit OSC 7880 and drop this placeholder instead of `LoadSession`.
+    pub(crate) host_split_pending: bool,
     /// Entry ID of the "Loading session ..." placeholder block pushed by `dispatch_load_session_inner`. Cleared by the `SessionLoaded`
     /// handler so the placeholder doesn't linger on screen when the loaded session has no replay content.
     pub(crate) loading_placeholder_id: Option<EntryId>,

@@ -978,6 +978,12 @@ pub struct AppView {
     /// Persisted worktree preference for `/fork`.
     /// Defaults to [`WorktreeMode::Ask`] (show popup).
     pub fork_worktree_mode: WorktreeMode,
+    /// `[hints] fork_host_split`: `auto` (default) or `never`.
+    pub fork_host_split_mode: crate::host_split::ForkHostSplitMode,
+    /// True when this process inherited `SUZURI` / `SUZURI_FORK_SPLIT` from the host pane.
+    pub host_split_available: bool,
+    /// One-shot `--split` / `--no-split` from the current `/fork`, consumed by `dispatch_fork_resolved`.
+    pub next_fork_host_split_override: Option<bool>,
     /// Restore code state on resume (`--restore-code`).
     pub restore_code: Option<bool>,
     /// One-shot session id: matching `LoadSession` / worktree resume injects `restore_code: false`, then this clears.
@@ -1553,6 +1559,9 @@ impl AppView {
             clipboard_focus_tip: Default::default(),
             new_session_worktree_mode: WorktreeMode::Never,
             fork_worktree_mode: WorktreeMode::Ask,
+            fork_host_split_mode: crate::host_split::ForkHostSplitMode::Auto,
+            host_split_available: false,
+            next_fork_host_split_override: None,
             restore_code: None,
             suppress_code_restore_once: None,
             resume_local_miss: None,
