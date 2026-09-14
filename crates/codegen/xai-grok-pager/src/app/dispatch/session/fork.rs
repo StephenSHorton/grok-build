@@ -1,6 +1,7 @@
 //! Fork dispatchers and fork placeholder builders.
 use super::lifecycle::{dispatch_new_session_inner_with_id, refuse_chat_mode_build_agent};
 use super::load::session_opens_as_chat;
+use super::modal::remove_agent_and_cleanup;
 use crate::acp::tracker::AcpUpdateTracker;
 use crate::app::actions::Effect;
 use crate::app::agent::{AgentCommand, AgentId, AgentSession, AgentState};
@@ -22,6 +23,7 @@ pub(in crate::app::dispatch) fn dispatch_fork(
     app: &mut AppView,
     args: crate::slash::commands::fork::ForkArgs,
 ) -> Vec<Effect> {
+    app.next_fork_host_split_override = args.host_split_override;
     let ActiveView::Agent(parent_id) = app.active_view else {
         app.show_toast("/fork only works inside a session");
         return vec![];
@@ -156,15 +158,31 @@ pub(in crate::app::dispatch) fn dispatch_fork_resolved(
     };
     let parent_cwd = parent.session.cwd.clone();
     let parent_is_worktree = parent.session.is_worktree;
+    let parent_chat_kind = parent.chat_kind || app.chat_mode;
+    let parent_conversation_entry = parent.conversation_entry;
     let new_id = AgentId(app.next_agent_id);
     app.next_agent_id += 1;
     let new_agent = build_fork_placeholder(app, new_id, parent_id, &parent_cwd, worktree);
-    let parent_marker = match directive.as_deref() {
-        Some(d) => format!("Forked: {d}"),
-        None => "Forked".to_string(),
+    let host_split_override = app.next_fork_host_split_override.take();
+    let host_split = crate::host_split::should_host_split(
+        app.host_split_available,
+        app.fork_host_split_mode,
+        host_split_override,
+    );
+    if host_split_override == Some(true) && !host_split {
+        app.show_toast("Host pane split needs suzuri; forking in this terminal");
+    }
+    let parent_marker = if host_split {
+        match directive.as_deref() {
+            Some(d) => format!("Forked into pane: {d}"),
+            None => "Forked into pane".to_string(),
+        }
+    } else {
+        match directive.as_deref() {
+            Some(d) => format!("Forked: {d}"),
+            None => "Forked".to_string(),
+        }
     };
-    let parent_chat_kind = parent.chat_kind || app.chat_mode;
-    let parent_conversation_entry = parent.conversation_entry;
     app.agents.insert(new_id, new_agent);
     {
         let agent = app
@@ -206,13 +224,19 @@ pub(in crate::app::dispatch) fn dispatch_fork_resolved(
                 .push_block(RenderBlock::system("Creating worktree\u{2026}".to_string()));
         }
         agent.pending_first_prompt = directive;
+        agent.host_split_pending = host_split;
     }
     if let Some(parent_mut) = app.agents.get_mut(&parent_id) {
         parent_mut
             .scrollback
             .push_block(RenderBlock::system(parent_marker));
+        if host_split {
+            parent_mut.show_toast("Forking into pane…");
+        }
     }
-    switch_to_agent(app, new_id, SwitchCause::Fork);
+    if !host_split {
+        switch_to_agent(app, new_id, SwitchCause::Fork);
+    }
     if worktree {
         vec![Effect::CreateWorktreeSession {
             agent_id: new_id,
@@ -366,6 +390,13 @@ pub(in crate::app::dispatch) fn handle_worktree_forked(
     resume_session_id: Option<String>,
     strategy_summary: Option<String>,
 ) -> Vec<Effect> {
+    if app
+        .agents
+        .get(&agent_id)
+        .is_some_and(|a| a.host_split_pending)
+    {
+        return finish_host_split(app, agent_id, session_id.0.to_string(), session_cwd);
+    }
     let session_id_str = session_id.0.to_string();
     let pending_entry = std::mem::take(&mut app.deferred_startup.pending_chat);
     let agent_entry = app
@@ -440,6 +471,37 @@ pub(in crate::app::dispatch) fn handle_worktree_forked(
         chat_kind: conversation_entry,
     }]
 }
+/// Drop the in-process placeholder and ask suzuri to resume the child in a new pane.
+fn finish_host_split(
+    app: &mut AppView,
+    child_id: AgentId,
+    session_id: String,
+    cwd: std::path::PathBuf,
+) -> Vec<Effect> {
+    let prompt = app
+        .agents
+        .get_mut(&child_id)
+        .and_then(|a| a.pending_first_prompt.take());
+    let parent_id = app
+        .agents
+        .get(&child_id)
+        .and_then(|a| a.session.forked_from);
+    let emitted = crate::host_split::emit_child_session(&session_id, &cwd, prompt);
+    if let Some(parent_id) = parent_id
+        && let Some(parent) = app.agents.get_mut(&parent_id)
+    {
+        if emitted {
+            parent.show_toast(&format!("Forked into pane · {session_id}"));
+        } else {
+            parent.show_toast(&format!(
+                "Forked session {session_id} — could not signal the host pane"
+            ));
+        }
+    }
+    remove_agent_and_cleanup(app, child_id);
+    vec![]
+}
+
 pub(in crate::app::dispatch) fn handle_fork_session_ready(
     app: &mut AppView,
     agent_id: AgentId,
@@ -447,6 +509,13 @@ pub(in crate::app::dispatch) fn handle_fork_session_ready(
     cwd: std::path::PathBuf,
     parent_session_id: acp::SessionId,
 ) -> Vec<Effect> {
+    if app
+        .agents
+        .get(&agent_id)
+        .is_some_and(|a| a.host_split_pending)
+    {
+        return finish_host_split(app, agent_id, new_session_id.0.to_string(), cwd);
+    }
     let session_id_str = new_session_id.0.to_string();
     let pending_entry = std::mem::take(&mut app.deferred_startup.pending_chat);
     let agent_entry = app
@@ -496,6 +565,23 @@ pub(in crate::app::dispatch) fn handle_fork_session_failed(
     error: String,
 ) -> Vec<Effect> {
     tracing::error!(agent = ?agent_id, error = %error, "Fork session failed");
+    if app
+        .agents
+        .get(&agent_id)
+        .is_some_and(|a| a.host_split_pending)
+    {
+        let parent_id = app
+            .agents
+            .get(&agent_id)
+            .and_then(|a| a.session.forked_from);
+        remove_agent_and_cleanup(app, agent_id);
+        if let Some(parent_id) = parent_id
+            && let Some(parent) = app.agents.get_mut(&parent_id)
+        {
+            parent.show_toast(&format!("Fork pane failed: {error}"));
+        }
+        return vec![];
+    }
     if let Some(agent) = app.agents.get_mut(&agent_id) {
         agent.pending_extensions_fetch = false;
         agent.session.finish_command();

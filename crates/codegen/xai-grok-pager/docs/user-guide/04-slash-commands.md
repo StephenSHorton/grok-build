@@ -47,6 +47,8 @@ Show session details — auth method, model, turn count, and context usage. Alia
 
 Branch the current session into a new agent, keeping history up to this point.
 
+Inside [suzuri](https://github.com/StephenSHorton/suzuri), `/fork` asks the host to split a pane and resume the child there (parent stays put). `--no-split` keeps the in-process dashboard fork. `--split` forces the host path when suzuri advertised support. See [Sessions](17-sessions.md).
+
 ### `/rewind` (alias: `/undo`)
 
 Roll the conversation back to an earlier turn and discard everything after it. `/undo` is the same command.

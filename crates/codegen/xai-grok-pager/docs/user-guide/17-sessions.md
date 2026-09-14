@@ -117,10 +117,12 @@ When you launch `grok`, the welcome screen lists recent sessions for the current
 Branch the current session into a peer agent that starts from a copy of the conversation:
 
 ```
-/fork [--worktree|--no-worktree] [directive]
+/fork [--worktree|--no-worktree] [--split|--no-split] [directive]
 ```
 
 Pass an optional `directive` to set the new session's first prompt. Use `--worktree` or `--no-worktree` to choose whether the fork runs in a new git worktree; omit both to be asked each time. The `--at <turn>` flag is not supported in this version.
+
+When Grok is running inside suzuri (`SUZURI=1` / `SUZURI_FORK_SPLIT=1`), `/fork` stays on the parent conversation and asks the host to open a new pane for the child (`grok --resume <new-id>`). Suzuri picks split direction so the child pane keeps the larger of height and width. Use `--no-split` (or `[hints] fork_host_split = "never"`) for the in-process dashboard fork. `--split` forces the host path when the host advertised support; outside suzuri it falls back in-process.
 
 ### Rename
 
