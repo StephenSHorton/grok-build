@@ -437,6 +437,7 @@ disabled = ["user/a1b2c3d4/noisy-plugin"]
 memory_modal_fullscreen = false        # remember the memory modal fullscreen state
 new_session_worktree_mode = "never"    # /new worktree prompt: "ask" | "always" | "never"
 fork_worktree_mode = "ask"             # /fork worktree prompt: "ask" | "always" | "never"
+fork_host_split = "auto"               # suzuri pane split for /fork: "auto" | "never"
 ```
 
 | Key | Type | Default | Description |
@@ -444,6 +445,7 @@ fork_worktree_mode = "ask"             # /fork worktree prompt: "ask" | "always"
 | `memory_modal_fullscreen` | bool | `false` | Remembers whether the memory modal was last opened fullscreen. |
 | `new_session_worktree_mode` | string | `"never"` | Worktree prompt for `/new`: `ask` shows the popup, `always` creates a worktree, `never` skips it. |
 | `fork_worktree_mode` | string | `"ask"` | Worktree prompt for `/fork`: `ask`, `always`, or `never`. |
+| `fork_host_split` | string | `"auto"` | When running in suzuri, `/fork` opens the child in a new pane (`auto`) or keeps the in-process dashboard fork (`never`). |
 
 ### Notifications
 

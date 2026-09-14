@@ -156,6 +156,9 @@ fn test_app() -> AppView {
         clipboard_focus_tip: Default::default(),
         new_session_worktree_mode: crate::app::app_view::WorktreeMode::Never,
         fork_worktree_mode: crate::app::app_view::WorktreeMode::Ask,
+        fork_host_split_mode: crate::host_split::ForkHostSplitMode::Auto,
+        host_split_available: false,
+        next_fork_host_split_override: None,
         restore_code: None,
         suppress_code_restore_once: None,
         resume_local_miss: None,
@@ -682,6 +685,7 @@ fn fork_args(worktree_override: Option<bool>, directive: Option<&str>) -> ForkAr
     ForkArgs {
         worktree_override,
         directive: directive.map(String::from),
+        host_split_override: None,
     }
 }
 /// Build a single-agent app for the `/fork` dispatcher tests.

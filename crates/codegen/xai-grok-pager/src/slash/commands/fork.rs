@@ -16,12 +16,17 @@ pub struct ForkArgs {
     /// Optional first prompt for the new session. Whitespace-trimmed.
     /// `None` when the user typed `/fork` (with or without flags) and no directive text; the new agent then opens with no first prompt.
     pub directive: Option<String>,
+    /// `Some(true)` from `--split` (ask the host terminal for a new pane).
+    /// `Some(false)` from `--no-split` (keep in-process even inside suzuri).
+    /// `None` follows `[hints] fork_host_split` + host env.
+    pub host_split_override: Option<bool>,
 }
 
 /// Parse the raw argument string after `/fork`. The args are user-typed text, and a directive that happens to begin
 /// with `--` must not be rejected. `--worktree` and `--no-worktree` cannot both appear.
 pub fn parse_fork_args(args: &str) -> Result<ForkArgs, String> {
     let mut worktree_override: Option<bool> = None;
+    let mut host_split_override: Option<bool> = None;
     let mut rest = args.trim_start();
 
     while !rest.is_empty() {
@@ -50,6 +55,26 @@ pub fn parse_fork_args(args: &str) -> Result<ForkArgs, String> {
                 worktree_override = Some(false);
                 rest = after.trim_start();
             }
+            "--split" => {
+                if host_split_override == Some(false) {
+                    return Err("--split and --no-split are mutually exclusive".into());
+                }
+                if host_split_override == Some(true) {
+                    return Err("--split specified twice".into());
+                }
+                host_split_override = Some(true);
+                rest = after.trim_start();
+            }
+            "--no-split" => {
+                if host_split_override == Some(true) {
+                    return Err("--split and --no-split are mutually exclusive".into());
+                }
+                if host_split_override == Some(false) {
+                    return Err("--no-split specified twice".into());
+                }
+                host_split_override = Some(false);
+                rest = after.trim_start();
+            }
             "--at" => {
                 return Err("--at is not supported in this version".into());
             }
@@ -65,6 +90,7 @@ pub fn parse_fork_args(args: &str) -> Result<ForkArgs, String> {
     Ok(ForkArgs {
         worktree_override,
         directive,
+        host_split_override,
     })
 }
 
@@ -74,7 +100,7 @@ impl SlashCommand for ForkCommand {
     slash_meta! {
         name: "fork",
         description: "Branch the current session into a peer agent",
-        usage: "/fork [--worktree|--no-worktree] [directive]",
+        usage: "/fork [--worktree|--no-worktree] [--split|--no-split] [directive]",
         takes_args: true,
         args_required: false,
         session_scoped: true,
@@ -101,6 +127,7 @@ mod tests {
         let parsed = parse_fork_args("").expect("empty args parse");
         assert_eq!(parsed.worktree_override, None);
         assert_eq!(parsed.directive, None);
+        assert_eq!(parsed.host_split_override, None);
     }
 
     #[test]
@@ -191,6 +218,38 @@ mod tests {
     }
 
     #[test]
+    fn parse_split_flag_alone() {
+        let parsed = parse_fork_args("--split").expect("--split");
+        assert_eq!(parsed.host_split_override, Some(true));
+        assert_eq!(parsed.directive, None);
+    }
+
+    #[test]
+    fn parse_no_split_with_directive() {
+        let parsed = parse_fork_args("--no-split keep going").expect("--no-split");
+        assert_eq!(parsed.host_split_override, Some(false));
+        assert_eq!(parsed.directive.as_deref(), Some("keep going"));
+    }
+
+    #[test]
+    fn parse_split_and_worktree_with_directive() {
+        let parsed = parse_fork_args("--worktree --split try async").expect("combo");
+        assert_eq!(parsed.worktree_override, Some(true));
+        assert_eq!(parsed.host_split_override, Some(true));
+        assert_eq!(parsed.directive.as_deref(), Some("try async"));
+    }
+
+    #[test]
+    fn parse_split_then_no_split_is_mutual_exclusion_error() {
+        let err =
+            parse_fork_args("--split --no-split").expect_err("conflicting split flags must error");
+        assert!(
+            err.contains("mutually exclusive"),
+            "error should explain mutual exclusion: {err}"
+        );
+    }
+
+    #[test]
     fn parse_unknown_token_is_treated_as_directive_start() {
         // Conservative behaviour: a bareword that isn't a recognised flag becomes the directive
         // `/fork --foo bar` is not rejected as a typo; the model receives `--foo bar` as its first prompt
@@ -235,6 +294,7 @@ mod tests {
             CommandResult::Action(Action::Fork(args)) => {
                 assert_eq!(args.worktree_override, None);
                 assert_eq!(args.directive, None);
+                assert_eq!(args.host_split_override, None);
             }
             other => panic!("expected Action(Fork(..)), got {other:?}"),
         }

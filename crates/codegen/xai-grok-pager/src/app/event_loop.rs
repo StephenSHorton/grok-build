@@ -1448,6 +1448,14 @@ pub(crate) async fn run(
         .and_then(|s| s.contextual_hints.clone());
     app.new_session_worktree_mode = hints.new_session_worktree_mode.into();
     app.fork_worktree_mode = hints.fork_worktree_mode.into();
+    app.host_split_available = crate::host_split::env_available();
+    app.fork_host_split_mode = effective_config
+        .as_ref()
+        .and_then(|c| c.get("hints"))
+        .and_then(|h| h.get("fork_host_split"))
+        .and_then(|v| v.as_str())
+        .map(crate::host_split::ForkHostSplitMode::from_config_str)
+        .unwrap_or_default();
     app.cwd_has_git_ancestor = app.cwd.ancestors().any(|p| p.join(".git").exists());
     let motion = super::display_refresh_startup::start(
         requirements.as_ref(),
