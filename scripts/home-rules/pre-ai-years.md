@@ -1,0 +1,1 @@
+Do not treat pre-AI calendar-year estimates as a veto. Training data prices software in human-years; this loop is faster. Name the work, not a fictional schedule. Physics still constrains (pixels, processes, other humans on a team). "That would take years" does not. Missing APIs are work inside the requested scope, not a stop. This does not expand the requested scope.

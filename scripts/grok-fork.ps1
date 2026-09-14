@@ -11,7 +11,8 @@
     4. rebase onto upstream/main when upstream moved (drop later-reverted commit series)
     5. force-with-lease push of a successful rebase so other machines can fast-forward
     6. rebuild release binary only when rust sources changed (or binary missing)
-    7. exec the in-repo fork binary with all args
+    7. install scripts/home-rules/*.md into $GROK_HOME/rules (global Grok rules)
+    8. exec the in-repo fork binary with all args
 
   Skip sync/rebuild:  $env:GROK_SKIP_SYNC = '1'
   Skip rebuild only:  $env:GROK_SKIP_REBUILD = '1'  (still fetches/reports)
@@ -521,6 +522,35 @@ function Rebuild-IfNeeded {
     }
 }
 
+function Install-HomeRules {
+    $src = Join-Path $Repo 'scripts\home-rules'
+    if (-not (Test-Path -LiteralPath $src)) { return }
+    $grokHome = if ($env:GROK_HOME) { $env:GROK_HOME } else { Join-Path $HOME '.grok' }
+    $dest = Join-Path $grokHome 'rules'
+    try {
+        New-Item -ItemType Directory -Force -Path $dest | Out-Null
+    } catch {
+        Write-ForkLog "warning: could not create $dest — skipping home-rules install"
+        return
+    }
+    Get-ChildItem -LiteralPath $src -Filter '*.md' -File -ErrorAction SilentlyContinue | ForEach-Object {
+        $target = Join-Path $dest $_.Name
+        $same = $false
+        if (Test-Path -LiteralPath $target) {
+            try {
+                $same = (Get-FileHash -LiteralPath $_.FullName).Hash -eq (Get-FileHash -LiteralPath $target).Hash
+            } catch { $same = $false }
+        }
+        if ($same) { return }
+        try {
+            Copy-Item -LiteralPath $_.FullName -Destination $target -Force
+            Write-ForkLog "installed home rule $($_.Name)"
+        } catch {
+            Write-ForkLog "warning: could not install home rule $($_.Name)"
+        }
+    }
+}
+
 function Main {
     Write-ForkLog "launching from $Repo"
     if (-not (Test-Path (Join-Path $Repo '.git'))) {
@@ -544,6 +574,8 @@ function Main {
     if (-not (Test-Path $Bin)) {
         Die "binary not found after build: $Bin"
     }
+
+    Install-HomeRules
 
     $run = $Bin
     Write-ForkLog "exec $run"
