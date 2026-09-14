@@ -1615,3 +1615,107 @@ fn handle_ask_user_question_pushes_system_block_when_displaced_local_fork_modal(
         "exactly one system block pushed"
     );
 }
+
+#[test]
+fn dispatch_fork_host_split_stays_on_parent() {
+    let mut app = fork_test_app();
+    app.host_split_available = true;
+    let effects = dispatch(
+        Action::Fork(fork_args(Some(false), Some("try async"))),
+        &mut app,
+    );
+    assert!(matches!(effects.as_slice(), [Effect::ForkSession { .. }]));
+    assert!(
+        matches!(app.active_view, ActiveView::Agent(id) if id == AgentId(0)),
+        "host-split /fork must stay on the parent"
+    );
+    assert_eq!(app.agents.len(), 2);
+    assert!(app.agents[&AgentId(1)].host_split_pending);
+    let parent_text = last_system_text(&app, AgentId(0));
+    assert!(
+        parent_text.contains("Forked into pane"),
+        "parent marker missing: {parent_text}"
+    );
+}
+
+#[test]
+fn fork_session_ready_host_split_drops_placeholder_without_load() {
+    let mut app = fork_test_app();
+    app.host_split_available = true;
+    dispatch(Action::Fork(fork_args(Some(false), None)), &mut app);
+    let effects = dispatch(
+        Action::TaskComplete(TaskResult::ForkSessionReady {
+            agent_id: AgentId(1),
+            new_session_id: acp::SessionId::new("child-sess"),
+            cwd: std::path::PathBuf::from("/tmp"),
+            parent_session_id: acp::SessionId::new("test-session"),
+        }),
+        &mut app,
+    );
+    assert!(
+        effects.is_empty(),
+        "host-split must not LoadSession in-process, got {effects:?}"
+    );
+    assert_eq!(app.agents.len(), 1, "placeholder must be dropped");
+    assert!(matches!(
+        app.active_view,
+        ActiveView::Agent(id) if id == AgentId(0)
+    ));
+}
+
+#[test]
+fn dispatch_fork_no_split_flag_switches_even_when_host_available() {
+    let mut app = fork_test_app();
+    app.host_split_available = true;
+    let mut args = fork_args(Some(false), None);
+    args.host_split_override = Some(false);
+    dispatch(Action::Fork(args), &mut app);
+    assert!(
+        matches!(app.active_view, ActiveView::Agent(id) if id == AgentId(1)),
+        "--no-split must switch to the in-process child"
+    );
+    assert!(!app.agents[&AgentId(1)].host_split_pending);
+}
+
+#[test]
+fn dispatch_fork_never_mode_ignores_host() {
+    let mut app = fork_test_app();
+    app.host_split_available = true;
+    app.fork_host_split_mode = crate::host_split::ForkHostSplitMode::Never;
+    dispatch(Action::Fork(fork_args(Some(false), None)), &mut app);
+    assert!(
+        matches!(app.active_view, ActiveView::Agent(id) if id == AgentId(1)),
+        "fork_host_split=never must keep in-process /fork"
+    );
+}
+
+#[test]
+fn worktree_forked_host_split_drops_placeholder_without_load() {
+    let mut app = fork_test_app();
+    app.host_split_available = true;
+    dispatch(Action::Fork(fork_args(Some(true), None)), &mut app);
+    assert!(app.agents[&AgentId(1)].host_split_pending);
+    let worktree_path = PathBuf::from("/tmp/grok-worktrees/host-split");
+    let session_cwd = worktree_path.join("sub");
+    let effects = dispatch(
+        Action::TaskComplete(TaskResult::WorktreeForked {
+            agent_id: AgentId(1),
+            session_id: acp::SessionId::new("forked-sess-hs"),
+            worktree_path,
+            session_cwd,
+            code_restored: false,
+            restore_summary: None,
+            restore_degree: None,
+            resume_session_id: Some("test-session".into()),
+            strategy_summary: None,
+        }),
+        &mut app,
+    );
+    assert!(
+        !effects
+            .iter()
+            .any(|e| matches!(e, Effect::LoadSession { .. })),
+        "host-split worktree must not LoadSession, got {effects:?}"
+    );
+    assert_eq!(app.agents.len(), 1);
+}

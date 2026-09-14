@@ -1685,6 +1685,23 @@ pub(in crate::app::dispatch) fn handle_worktree_session_failed(
     error: String,
 ) -> Vec<Effect> {
     tracing::error!(agent = ?agent_id, error = %error, "Worktree session creation failed");
+    if app
+        .agents
+        .get(&agent_id)
+        .is_some_and(|a| a.host_split_pending)
+    {
+        let parent_id = app
+            .agents
+            .get(&agent_id)
+            .and_then(|a| a.session.forked_from);
+        remove_agent_and_cleanup(app, agent_id);
+        if let Some(parent_id) = parent_id
+            && let Some(parent) = app.agents.get_mut(&parent_id)
+        {
+            parent.show_toast(&format!("Fork pane failed: {error}"));
+        }
+        return vec![];
+    }
     let is_orphan = app
         .agents
         .get(&agent_id)
