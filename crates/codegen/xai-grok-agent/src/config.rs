@@ -301,11 +301,12 @@ fn grok_build_concise_toolset() -> ToolServerConfig {
     cfg
 }
 
-fn session_bus_tools() -> [ToolConfig; 5] {
+fn session_bus_tools() -> [ToolConfig; 6] {
     [
         (&grok_build::SessionsListTool).into(),
         (&grok_build::SessionsClaimTool).into(),
         (&grok_build::SessionsOpenTool).into(),
+        (&grok_build::SessionsCloseTool).into(),
         (&grok_build::SessionsReleaseTool).into(),
         (&grok_build::SessionsSendTool).into(),
     ]

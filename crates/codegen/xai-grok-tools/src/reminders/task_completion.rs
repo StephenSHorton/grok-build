@@ -663,6 +663,7 @@ pub fn consumed_completion_ids(output: &ToolOutput) -> Vec<&str> {
         | ToolOutput::SessionsList(_)
         | ToolOutput::SessionsClaim(_)
         | ToolOutput::SessionsOpen(_)
+        | ToolOutput::SessionsClose(_)
         | ToolOutput::SessionsRelease(_)
         | ToolOutput::SessionsSend(_)
         | ToolOutput::UpdateGoal(_)

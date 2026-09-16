@@ -2482,6 +2482,12 @@ impl SessionActor {
                 vec![],
                 vec![],
             ),
+            ToolInput::SessionsClose(ref c) => (
+                format!("Close Grok conversation {}", c.session),
+                acp::ToolKind::Other,
+                vec![],
+                vec![],
+            ),
             ToolInput::SessionsRelease(ref c) => (
                 format!("Release duty {}", c.role),
                 acp::ToolKind::Other,
