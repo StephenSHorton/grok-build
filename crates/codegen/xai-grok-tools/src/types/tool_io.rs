@@ -95,6 +95,8 @@ pub enum ToolInput {
     SchedulerList(crate::implementations::grok_build::scheduler::list::SchedulerListInput),
     SessionsList(crate::implementations::grok_build::sessions::SessionsListInput),
     SessionsClaim(crate::implementations::grok_build::sessions::SessionsClaimInput),
+    SessionsOpen(crate::implementations::grok_build::sessions::SessionsOpenInput),
+    SessionsClose(crate::implementations::grok_build::sessions::SessionsCloseInput),
     SessionsRelease(crate::implementations::grok_build::sessions::SessionsReleaseInput),
     SessionsSend(crate::implementations::grok_build::sessions::SessionsSendInput),
     UpdateGoal(UpdateGoalInput),

@@ -626,6 +626,8 @@ pub enum ToolOutput {
     SchedulerList(crate::implementations::grok_build::scheduler::list::SchedulerListOutput),
     SessionsList(crate::implementations::grok_build::sessions::SessionsListOutput),
     SessionsClaim(crate::implementations::grok_build::sessions::SessionsClaimOutput),
+    SessionsOpen(crate::implementations::grok_build::sessions::SessionsOpenOutput),
+    SessionsClose(crate::implementations::grok_build::sessions::SessionsCloseOutput),
     SessionsRelease(crate::implementations::grok_build::sessions::SessionsReleaseOutput),
     SessionsSend(crate::implementations::grok_build::sessions::SessionsSendOutput),
     UpdateGoal(crate::implementations::grok_build::update_goal::UpdateGoalOutput),
@@ -992,6 +994,34 @@ impl ToolOutput {
             }
             ToolOutput::SessionsClaim(o) => {
                 format!("Claimed role {} for session {}.", o.role, o.session_id)
+            }
+            ToolOutput::SessionsOpen(o) => {
+                let title = o.title.as_deref().unwrap_or("untitled");
+                if o.pane {
+                    format!(
+                        "Opened pane session {} ({title}) in {}. First turn queued.",
+                        o.session_id, o.cwd
+                    )
+                } else {
+                    format!(
+                        "Reserved session {} ({title}) in {} but no suzuri pane was available.",
+                        o.session_id, o.cwd
+                    )
+                }
+            }
+            ToolOutput::SessionsClose(o) => {
+                let title = o.title.as_deref().unwrap_or("untitled");
+                if o.closed {
+                    format!(
+                        "Closed session {} ({title}) after {}ms; pane will jelly-close.",
+                        o.session_id, o.waited_ms
+                    )
+                } else {
+                    format!(
+                        "Signaled session {} ({title}) but it was still live after {}ms.",
+                        o.session_id, o.waited_ms
+                    )
+                }
             }
             ToolOutput::SessionsRelease(o) => {
                 format!("Released role {} from session {}.", o.role, o.session_id)

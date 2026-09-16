@@ -2464,6 +2464,25 @@ impl SessionActor {
                 vec![],
                 vec![],
             ),
+            ToolInput::SessionsOpen(ref o) => (
+                {
+                    let title = o.title.trim();
+                    if title.is_empty() {
+                        "Open Grok conversation".to_string()
+                    } else {
+                        format!("Open Grok conversation {title}")
+                    }
+                },
+                acp::ToolKind::Other,
+                vec![],
+                vec![],
+            ),
+            ToolInput::SessionsClose(ref c) => (
+                format!("Close Grok conversation {}", c.session),
+                acp::ToolKind::Other,
+                vec![],
+                vec![],
+            ),
             ToolInput::SessionsRelease(ref c) => (
                 format!("Release duty {}", c.role),
                 acp::ToolKind::Other,
