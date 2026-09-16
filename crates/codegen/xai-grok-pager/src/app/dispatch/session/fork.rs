@@ -487,7 +487,17 @@ fn finish_host_split(
         .agents
         .get(&child_id)
         .and_then(|a| a.session.forked_from);
-    let emitted = crate::host_split::emit_child_session(&session_id, &cwd, prompt);
+    // Must go through EscapeWriter: fd 2 is redirected to /dev/null, and locking
+    // the TUI stderr from the event loop deadlocks the writer thread.
+    let emitted = if let Some(req) =
+        crate::host_split::HostForkSplit::for_child_session(&session_id, &cwd, prompt)
+    {
+        app.escape_writer
+            .emit(crate::host_split::encode_osc(&req));
+        true
+    } else {
+        false
+    };
     if let Some(parent_id) = parent_id
         && let Some(parent) = app.agents.get_mut(&parent_id)
     {
