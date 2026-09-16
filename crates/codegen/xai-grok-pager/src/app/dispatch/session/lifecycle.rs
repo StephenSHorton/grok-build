@@ -1466,6 +1466,16 @@ pub(in crate::app::dispatch) fn handle_session_created(
                 session_id_clone.clone(),
             ));
         }
+        if let Some(title) = crate::host_split::env_session_title() {
+            agent.display_name = Some(title.clone());
+            effects.push(Effect::RenameSession {
+                agent_id,
+                session_id: session_id_clone.clone(),
+                title,
+                cwd: cwd.clone(),
+                kind: agent.rename_kind(),
+            });
+        }
         effects.push(Effect::RegisterActiveSession {
             session_id: session_id_clone,
             cwd: agent.session.cwd.display().to_string(),
@@ -1611,6 +1621,16 @@ pub(in crate::app::dispatch) fn handle_worktree_session_created(
                 agent_id,
                 session_id_clone.clone(),
             ));
+        }
+        if let Some(title) = crate::host_split::env_session_title() {
+            agent.display_name = Some(title.clone());
+            effects.push(Effect::RenameSession {
+                agent_id,
+                session_id: session_id_clone.clone(),
+                title,
+                cwd: cwd.clone(),
+                kind: agent.rename_kind(),
+            });
         }
         effects.push(Effect::RegisterActiveSession {
             session_id: session_id_clone,
