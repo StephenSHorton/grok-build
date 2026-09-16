@@ -5,7 +5,7 @@
 //! `ESC]7880;fork=1;resume=…;cwd=…;bin=…;prompt=…;title=…;brand=…BEL`
 
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /// Whether a suzuri pane advertised OSC 7880 support via env.
 pub fn env_available() -> bool {
@@ -136,23 +136,18 @@ fn is_unreserved(b: u8) -> bool {
     )
 }
 
-/// Best-effort write to the PTY (stderr, same stream SetTitle uses).
+/// Write OSC 7880 to the real TTY fd (the pager redirects process stderr to `/dev/null`).
+/// Event-loop code must use [`crate::render::draw::EscapeWriter`] instead — locking
+/// stderr from that thread deadlocks the writer.
 pub fn emit(req: &HostForkSplit) {
     if cfg!(test) {
         return;
     }
     let bytes = encode_osc(req);
-    let mut stderr = std::io::stderr();
-    let _ = stderr.write_all(&bytes);
-    let _ = stderr.flush();
-}
-
-pub fn emit_child_session(resume: &str, cwd: &Path, prompt: Option<String>) -> bool {
-    let Some(req) = HostForkSplit::for_child_session(resume, cwd, prompt) else {
-        return false;
-    };
-    emit(&req);
-    true
+    xai_grok_shell::util::with_locked_stderr(|stderr| {
+        let _ = stderr.write_all(&bytes);
+        let _ = stderr.flush();
+    });
 }
 
 #[cfg(test)]
