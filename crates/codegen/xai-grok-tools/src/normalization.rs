@@ -121,6 +121,7 @@ pub fn canonical_input(input: &ToolInput) -> Option<serde_json::Value> {
         | ToolInput::SessionsList(_)
         | ToolInput::SessionsClaim(_)
         | ToolInput::SessionsOpen(_)
+        | ToolInput::SessionsClose(_)
         | ToolInput::SessionsRelease(_)
         | ToolInput::SessionsSend(_)
         | ToolInput::UpdateGoal(_)

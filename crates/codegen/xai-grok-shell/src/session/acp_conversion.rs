@@ -618,6 +618,7 @@ pub(crate) fn acp_tool_update(
         | ToolOutput::SessionsList(_)
         | ToolOutput::SessionsClaim(_)
         | ToolOutput::SessionsOpen(_)
+        | ToolOutput::SessionsClose(_)
         | ToolOutput::SessionsRelease(_)
         | ToolOutput::SessionsSend(_) => Some(acp::ToolCallUpdate::new(
             acp::ToolCallId::new(Arc::from(tool_call_id)),
