@@ -6,6 +6,7 @@ pub(crate) const MAX_PLAN_FILE_BYTES: usize = 256 * 1024;
 pub mod leader_bridge;
 pub mod meta;
 pub mod model_state;
+pub(crate) mod pane_open;
 mod peer_send;
 pub mod spawn;
 pub(crate) mod subagent_label_registry;
