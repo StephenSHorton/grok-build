@@ -485,6 +485,10 @@ mod tests {
             prompt.contains("Do not wait for the user to `/fork`"),
             "sessions_open must be agent-initiated, not gated on /fork"
         );
+        assert!(
+            prompt.contains("SUZURI_CONTROL_URL"),
+            "suzuri pane layout is the loopback HTTP API, not MCP"
+        );
     }
 
     #[test]
