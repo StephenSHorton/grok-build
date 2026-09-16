@@ -598,6 +598,7 @@ pub enum ToolOutput {
     SessionsList(crate::implementations::grok_build::sessions::SessionsListOutput),
     SessionsClaim(crate::implementations::grok_build::sessions::SessionsClaimOutput),
     SessionsOpen(crate::implementations::grok_build::sessions::SessionsOpenOutput),
+    SessionsClose(crate::implementations::grok_build::sessions::SessionsCloseOutput),
     SessionsRelease(crate::implementations::grok_build::sessions::SessionsReleaseOutput),
     SessionsSend(crate::implementations::grok_build::sessions::SessionsSendOutput),
     UpdateGoal(crate::implementations::grok_build::update_goal::UpdateGoalOutput),
@@ -967,6 +968,20 @@ impl ToolOutput {
                     format!(
                         "Reserved session {} ({title}) in {} but no suzuri pane was available.",
                         o.session_id, o.cwd
+                    )
+                }
+            }
+            ToolOutput::SessionsClose(o) => {
+                let title = o.title.as_deref().unwrap_or("untitled");
+                if o.closed {
+                    format!(
+                        "Closed session {} ({title}) after {}ms; pane will jelly-close.",
+                        o.session_id, o.waited_ms
+                    )
+                } else {
+                    format!(
+                        "Signaled session {} ({title}) but it was still live after {}ms.",
+                        o.session_id, o.waited_ms
                     )
                 }
             }
