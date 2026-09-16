@@ -70,9 +70,9 @@ pub use send_subagent_message::{
     SEND_SUBAGENT_MESSAGE_TOOL_NAME, SendSubagentMessageDisposition, SendSubagentMessageTool,
 };
 pub use sessions::{
-    SESSIONS_CLAIM_TOOL_NAME, SESSIONS_LIST_TOOL_NAME, SESSIONS_OPEN_TOOL_NAME,
-    SESSIONS_RELEASE_TOOL_NAME, SESSIONS_SEND_TOOL_NAME, SessionsClaimTool, SessionsListTool,
-    SessionsOpenTool, SessionsReleaseTool, SessionsSendTool,
+    SESSIONS_CLAIM_TOOL_NAME, SESSIONS_CLOSE_TOOL_NAME, SESSIONS_LIST_TOOL_NAME,
+    SESSIONS_OPEN_TOOL_NAME, SESSIONS_RELEASE_TOOL_NAME, SESSIONS_SEND_TOOL_NAME, SessionsClaimTool,
+    SessionsCloseTool, SessionsListTool, SessionsOpenTool, SessionsReleaseTool, SessionsSendTool,
 };
 pub use task::{TaskTool, is_task_tool_id};
 pub use task_output::{GetTerminalCommandOutputTool, TaskOutputTool, WaitTasksTool};

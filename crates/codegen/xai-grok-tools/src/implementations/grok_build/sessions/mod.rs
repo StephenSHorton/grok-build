@@ -3,6 +3,7 @@
 pub mod store;
 
 mod claim;
+mod close;
 mod list;
 mod open;
 mod release;
@@ -10,6 +11,9 @@ mod send;
 
 pub use claim::{
     SESSIONS_CLAIM_TOOL_NAME, SessionsClaimInput, SessionsClaimOutput, SessionsClaimTool,
+};
+pub use close::{
+    SESSIONS_CLOSE_TOOL_NAME, SessionsCloseInput, SessionsCloseOutput, SessionsCloseTool,
 };
 pub use list::{SESSIONS_LIST_TOOL_NAME, SessionsListInput, SessionsListOutput, SessionsListTool};
 pub use open::{SESSIONS_OPEN_TOOL_NAME, SessionsOpenInput, SessionsOpenOutput, SessionsOpenTool};
@@ -30,6 +34,7 @@ pub(crate) fn sessions_bundle_requires_expr() -> Expr<ToolRequirement> {
         Expr::Value(ToolRequirement::tool::<list::SessionsListTool>()),
         Expr::Value(ToolRequirement::tool::<claim::SessionsClaimTool>()),
         Expr::Value(ToolRequirement::tool::<open::SessionsOpenTool>()),
+        Expr::Value(ToolRequirement::tool::<close::SessionsCloseTool>()),
         Expr::Value(ToolRequirement::tool::<release::SessionsReleaseTool>()),
         Expr::Value(ToolRequirement::tool::<send::SessionsSendTool>()),
     ])

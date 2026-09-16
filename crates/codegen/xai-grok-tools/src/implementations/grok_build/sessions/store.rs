@@ -442,6 +442,17 @@ impl SessionBus {
         })
     }
 
+    /// Roster pid for a session, if the last register recorded one.
+    pub fn session_pid(&self, session_id: &str) -> BusResult<Option<u32>> {
+        self.with_lock(|| {
+            Ok(self
+                .read_roster()?
+                .sessions
+                .get(session_id)
+                .and_then(|e| e.pid))
+        })
+    }
+
     pub fn resolve_target(&self, to: &str) -> BusResult<String> {
         self.with_lock(|| {
             self.prune_dead_locked()?;
@@ -631,7 +642,7 @@ fn write_json<T: Serialize>(path: &Path, value: &T) -> BusResult<()> {
     Ok(())
 }
 
-fn pid_is_alive(pid: u32) -> bool {
+pub(crate) fn pid_is_alive(pid: u32) -> bool {
     if pid == 0 {
         return false;
     }
