@@ -2466,12 +2466,7 @@ impl SessionActor {
             ),
             ToolInput::SessionsOpen(ref o) => (
                 {
-                    let title = o
-                        .title
-                        .as_deref()
-                        .map(str::trim)
-                        .filter(|s| !s.is_empty())
-                        .unwrap_or_else(|| o.prompt.trim());
+                    let title = o.title.trim();
                     if title.is_empty() {
                         "Open Grok conversation".to_string()
                     } else {
