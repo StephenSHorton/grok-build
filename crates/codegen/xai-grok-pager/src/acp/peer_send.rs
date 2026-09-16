@@ -20,7 +20,9 @@ pub(super) fn is_tool(tool_call: &acp::ToolCall) -> bool {
         .and_then(|meta| meta.get(TOOL_META_KEY))
     {
         Some(meta) => serde_json::from_value::<CanonicalToolMeta>(meta.clone()).is_ok_and(|meta| {
-            meta.version == TOOL_META_VERSION && meta.kind == ToolKind::SessionsSend
+            meta.version == TOOL_META_VERSION
+                && meta.kind == ToolKind::SessionsSend
+                && meta.name == SESSIONS_SEND_TOOL_NAME
         }),
         None => {
             tool_call.title == SESSIONS_SEND_TOOL_NAME

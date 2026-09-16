@@ -155,6 +155,7 @@ fn test_app() -> AppView {
         fork_worktree_mode: crate::app::app_view::WorktreeMode::Ask,
         fork_host_split_mode: crate::host_split::ForkHostSplitMode::Auto,
         host_split_available: false,
+        host_pane_opened: std::collections::HashSet::new(),
         next_fork_host_split_override: None,
         restore_code: None,
         suppress_code_restore_once: None,

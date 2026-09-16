@@ -448,9 +448,14 @@ mod tests {
         assert!(prompt.contains("sessions_list"));
         assert!(prompt.contains("sessions_send"));
         assert!(prompt.contains("sessions_claim"));
+        assert!(prompt.contains("sessions_open"));
         assert!(
             prompt.contains("only when the user says this conversation owns that job"),
             "duty claims must be user-initiated, not implied by a skill"
+        );
+        assert!(
+            prompt.contains("Do not wait for the user to `/fork`"),
+            "sessions_open must be agent-initiated, not gated on /fork"
         );
     }
 

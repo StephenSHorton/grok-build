@@ -644,6 +644,7 @@ impl ToolRegistryBuilder {
         b.register::<grok_build::SchedulerListTool>();
         b.register::<grok_build::SessionsListTool>();
         b.register::<grok_build::SessionsClaimTool>();
+        b.register::<grok_build::SessionsOpenTool>();
         b.register::<grok_build::SessionsReleaseTool>();
         b.register::<grok_build::SessionsSendTool>();
         b.register::<codex::apply_patch::ApplyPatchTool>();

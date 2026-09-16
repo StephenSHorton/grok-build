@@ -4,6 +4,7 @@
 pub mod leader_bridge;
 pub mod meta;
 pub mod model_state;
+pub(crate) mod pane_open;
 mod peer_send;
 pub mod spawn;
 mod subagent_message;
