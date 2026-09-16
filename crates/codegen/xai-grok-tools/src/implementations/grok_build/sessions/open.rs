@@ -11,9 +11,10 @@ pub struct SessionsOpenInput {
         description = "First user turn for the new conversation. This is not a fork of the current chat."
     )]
     pub prompt: String,
-    #[serde(default)]
-    #[schemars(description = "Pane title. Defaults to a short prefix of the prompt.")]
-    pub title: Option<String>,
+    #[schemars(
+        description = "Short name you invent for this conversation, based on the job. No naming convention. Shown on the suzuri pane."
+    )]
+    pub title: String,
     #[serde(default)]
     #[schemars(
         description = "Working directory for the new session. Defaults to this conversation's cwd."
@@ -47,7 +48,7 @@ impl crate::types::tool_metadata::ToolMetadata for SessionsOpenTool {
     }
 
     fn description_template(&self) -> &str {
-        "Start a new Grok Build conversation in a live suzuri pane. Not a fork of this history and not a subagent: the child keeps its own context and stays open after the task. Returns session_id; talk to it with sessions_send. Do not wait for the user to /fork."
+        "Start a new Grok Build conversation in a live suzuri pane. Not a fork of this history and not a subagent: the child keeps its own context and stays open after the task. Always set title to a short name for the work (no naming convention). Returns session_id; talk to it with sessions_send. Do not wait for the user to /fork."
     }
 
     fn requires_expr(&self) -> Expr<ToolRequirement> {
@@ -94,6 +95,12 @@ impl xai_tool_runtime::Tool for SessionsOpenTool {
                 "prompt is required",
             ));
         }
+        let title = sanitize_title(&input.title).ok_or_else(|| {
+            xai_tool_runtime::ToolError::custom(
+                "empty_title",
+                "title is required — pick a short name for this conversation",
+            )
+        })?;
         if !suzuri_pane_available() {
             return Err(xai_tool_runtime::ToolError::custom(
                 "pane_unavailable",
@@ -102,15 +109,20 @@ impl xai_tool_runtime::Tool for SessionsOpenTool {
         }
         let (_from_session, _from_title, caller_cwd) = super::caller_identity(&ctx).await?;
         let cwd = resolve_cwd(input.cwd.as_deref(), caller_cwd.as_deref())?;
-        let title = resolve_title(input.title.as_deref(), prompt);
         let session_id = uuid::Uuid::now_v7().to_string();
         let bus = super::open_bus()?;
-        bus.register(&session_id, title.clone(), Some(cwd.clone()), None, None)
-            .map_err(super::bus_tool_error)?;
+        bus.register(
+            &session_id,
+            Some(title.clone()),
+            Some(cwd.clone()),
+            None,
+            None,
+        )
+        .map_err(super::bus_tool_error)?;
         Ok(SessionsOpenOutput {
             session_id,
             pane: true,
-            title,
+            title: Some(title),
             cwd,
             prompt: prompt.to_string(),
         })
@@ -158,22 +170,16 @@ fn resolve_cwd(
         .map_err(|e| xai_tool_runtime::ToolError::custom("cwd", e.to_string()))
 }
 
-fn resolve_title(requested: Option<&str>, prompt: &str) -> Option<String> {
-    if let Some(t) = requested.map(str::trim).filter(|s| !s.is_empty()) {
-        return Some(t.to_string());
-    }
-    let line = prompt.lines().next().unwrap_or(prompt).trim();
-    if line.is_empty() {
+fn sanitize_title(requested: &str) -> Option<String> {
+    let t = requested.trim();
+    if t.is_empty() {
         return None;
     }
     const MAX: usize = 40;
-    if line.chars().count() <= MAX {
-        Some(line.to_string())
+    if t.chars().count() <= MAX {
+        Some(t.to_string())
     } else {
-        Some(format!(
-            "{}…",
-            line.chars().take(MAX.saturating_sub(1)).collect::<String>()
-        ))
+        Some(t.chars().take(MAX.saturating_sub(1)).collect::<String>() + "…")
     }
 }
 
@@ -184,20 +190,17 @@ mod tests {
     #[test]
     fn title_from_prompt_prefix() {
         assert_eq!(
-            resolve_title(None, "review the auth PR please"),
-            Some("review the auth PR please".into())
+            sanitize_title("review the auth PR"),
+            Some("review the auth PR".into())
         );
         let long = "a".repeat(80);
-        let t = resolve_title(None, &long).unwrap();
+        let t = sanitize_title(&long).unwrap();
         assert!(t.ends_with('…'));
         assert!(t.chars().count() <= 40);
     }
 
     #[test]
-    fn title_prefers_explicit() {
-        assert_eq!(
-            resolve_title(Some("auth-review"), "a long prompt"),
-            Some("auth-review".into())
-        );
+    fn title_rejects_blank() {
+        assert!(sanitize_title("   ").is_none());
     }
 }
