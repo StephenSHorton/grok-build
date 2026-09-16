@@ -155,6 +155,20 @@ fn handle_inner(msg: AcpClientMessage, app: &mut AppView) -> bool {
     match msg {
         AcpClientMessage::SessionNotification(notif) => {
             let mut meta = NotificationMeta::from_json(notif.request.meta.as_ref());
+            // Agent tools cannot write OSC (ACP stdio / fd 2 redirected). Emit
+            // here, before drop gates, so a completed `sessions_open` still
+            // splits even if the UI update is skipped.
+            if !meta.is_replay {
+                let writer = app.escape_writer.clone();
+                let available = app.host_split_available;
+                crate::acp::pane_open::maybe_emit(
+                    &writer,
+                    &notif.request.update,
+                    &mut app.host_pane_opened,
+                    available,
+                );
+            }
+
             let affected = match find_session_match(app, &notif.request.session_id) {
                 Some(SessionMatch::Root(id)) => {
                     let is_active = is_matched_agent_active(app, id);

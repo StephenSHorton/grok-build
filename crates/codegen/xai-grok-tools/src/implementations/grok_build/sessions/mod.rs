@@ -1,9 +1,10 @@
-//! Sibling Grok conversations: list, claim a duty role, send a turn.
+//! Sibling Grok conversations: list, claim a duty role, send a turn, open a pane.
 
 pub mod store;
 
 mod claim;
 mod list;
+mod open;
 mod release;
 mod send;
 
@@ -11,6 +12,7 @@ pub use claim::{
     SESSIONS_CLAIM_TOOL_NAME, SessionsClaimInput, SessionsClaimOutput, SessionsClaimTool,
 };
 pub use list::{SESSIONS_LIST_TOOL_NAME, SessionsListInput, SessionsListOutput, SessionsListTool};
+pub use open::{SESSIONS_OPEN_TOOL_NAME, SessionsOpenInput, SessionsOpenOutput, SessionsOpenTool};
 pub use release::{
     SESSIONS_RELEASE_TOOL_NAME, SessionsReleaseInput, SessionsReleaseOutput, SessionsReleaseTool,
 };
@@ -27,6 +29,7 @@ pub(crate) fn sessions_bundle_requires_expr() -> Expr<ToolRequirement> {
     Expr::And(vec![
         Expr::Value(ToolRequirement::tool::<list::SessionsListTool>()),
         Expr::Value(ToolRequirement::tool::<claim::SessionsClaimTool>()),
+        Expr::Value(ToolRequirement::tool::<open::SessionsOpenTool>()),
         Expr::Value(ToolRequirement::tool::<release::SessionsReleaseTool>()),
         Expr::Value(ToolRequirement::tool::<send::SessionsSendTool>()),
     ])

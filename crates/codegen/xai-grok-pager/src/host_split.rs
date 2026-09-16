@@ -1,8 +1,9 @@
-//! Suzuri host-pane `/fork`: emit OSC 7880 so the terminal splits and resumes
-//! the child session in a new PTY instead of switching agents in-process.
+//! Suzuri host-pane split: emit OSC 7880 so the terminal splits and launches
+//! a Grok process in a new PTY.
 //!
 //! Protocol (values percent-encoded):
-//! `ESC]7880;fork=1;resume=…;cwd=…;bin=…;prompt=…;title=…;brand=…BEL`
+//! - `/fork`: `ESC]7880;fork=1;resume=…;cwd=…;bin=…;prompt=…;title=…;brand=…BEL`
+//! - new session: `ESC]7880;new=1;session=…;cwd=…;bin=…;prompt=…;title=…;brand=…BEL`
 
 use std::io::Write;
 use std::path::PathBuf;
@@ -62,6 +63,8 @@ pub struct HostForkSplit {
     pub prompt: Option<String>,
     pub title: Option<String>,
     pub brand_fork: bool,
+    /// `true` → `new=1;session=` (`--session-id`). `false` → `fork=1;resume=` (`--resume`).
+    pub new_session: bool,
 }
 
 impl HostForkSplit {
@@ -78,13 +81,40 @@ impl HostForkSplit {
             prompt,
             title: None,
             brand_fork: crate::brand::is_fork(),
+            new_session: false,
+        })
+    }
+
+    pub fn for_new_session(
+        session_id: impl Into<String>,
+        cwd: impl Into<PathBuf>,
+        prompt: Option<String>,
+        title: Option<String>,
+    ) -> Option<Self> {
+        let bin = std::env::current_exe().ok()?;
+        Some(Self {
+            resume: session_id.into(),
+            cwd: cwd.into(),
+            bin,
+            prompt,
+            title,
+            brand_fork: crate::brand::is_fork(),
+            new_session: true,
         })
     }
 }
 
 pub fn encode_osc(req: &HostForkSplit) -> Vec<u8> {
-    let mut s = String::from("\x1b]7880;fork=1");
-    push_kv(&mut s, "resume", &req.resume);
+    let mut s = if req.new_session {
+        String::from("\x1b]7880;new=1")
+    } else {
+        String::from("\x1b]7880;fork=1")
+    };
+    if req.new_session {
+        push_kv(&mut s, "session", &req.resume);
+    } else {
+        push_kv(&mut s, "resume", &req.resume);
+    }
     push_kv(&mut s, "cwd", &req.cwd.to_string_lossy());
     push_kv(&mut s, "bin", &req.bin.to_string_lossy());
     if let Some(p) = req
@@ -163,6 +193,7 @@ mod tests {
             prompt: Some("try the async approach".into()),
             title: None,
             brand_fork: true,
+            new_session: false,
         });
         let s = String::from_utf8(bytes).unwrap();
         assert!(s.starts_with("\u{1b}]7880;fork=1;"));
@@ -172,6 +203,26 @@ mod tests {
         assert!(s.contains("brand=fork"));
         assert!(s.contains("prompt=try"));
         assert!(s.contains("%20"), "spaces in prompt are percent-encoded");
+    }
+
+    #[test]
+    fn encode_osc_new_session_uses_session_key() {
+        let bytes = encode_osc(&HostForkSplit {
+            resume: "sess-new".into(),
+            cwd: PathBuf::from("/tmp/proj"),
+            bin: PathBuf::from("/usr/bin/grok-fork"),
+            prompt: Some("own the review".into()),
+            title: Some("review".into()),
+            brand_fork: true,
+            new_session: true,
+        });
+        let s = String::from_utf8(bytes).unwrap();
+        assert!(s.starts_with("\u{1b}]7880;new=1;"));
+        assert!(s.contains("session=sess-new"));
+        assert!(!s.contains("resume="));
+        assert!(!s.contains("fork=1"));
+        assert!(s.contains("title=review"));
+        assert!(s.ends_with('\u{7}'));
     }
 
     #[test]
