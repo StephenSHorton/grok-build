@@ -13,6 +13,12 @@ pub fn env_available() -> bool {
     env_flag("SUZURI_FORK_SPLIT") || env_flag("SUZURI")
 }
 
+/// Title the child pane/session should keep (`GROK_SESSION_TITLE` from suzuri).
+pub fn env_session_title() -> Option<String> {
+    let raw = std::env::var("GROK_SESSION_TITLE").ok()?;
+    xai_grok_shell::session::persistence::sanitize_and_cap_title(&raw)
+}
+
 fn env_flag(name: &str) -> bool {
     std::env::var(name).ok().is_some_and(|v| {
         matches!(
