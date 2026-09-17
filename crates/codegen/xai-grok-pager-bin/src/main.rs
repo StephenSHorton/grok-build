@@ -2021,6 +2021,7 @@ fn main() {
     if dispatch_version_if_requested(&args) || dispatch_doctor_if_requested(&args) {
         return;
     }
+    refuse_fork_without_forced_updates(args.no_auto_update);
     xai_grok_pager_minimal::install();
     #[cfg(all(feature = "jemalloc", unix))]
     xai_grok_pager::memory_release::install_release_hook(purge_jemalloc_retained_pages);
@@ -2578,16 +2579,59 @@ fn build_update_config() -> UpdateConfig {
     }
     config
 }
+fn autoupdater_env_disabled() -> bool {
+    std::env::var_os("GROK_DISABLE_AUTOUPDATER")
+        .is_some_and(|v| env_flag_enabled(&v.to_string_lossy()))
+}
+
+fn fork_sync_token_ok() -> bool {
+    std::env::var_os("GROK_FORK_SYNC_OK")
+        .is_some_and(|v| env_flag_enabled(&v.to_string_lossy()))
+}
+
+/// Fork process: no off-switch, and no start unless the launcher just synced.
+/// `--version` / `doctor` already returned before this is called.
+fn refuse_fork_without_forced_updates(no_auto_update_flag: bool) {
+    if !xai_grok_pager::brand::is_fork() {
+        return;
+    }
+    if no_auto_update_flag {
+        eprintln!(
+            "grok-fork: --no-auto-update is not allowed. Fork must take updates.\n\
+             Official grok is the fallback."
+        );
+        std::process::exit(1);
+    }
+    if autoupdater_env_disabled() {
+        eprintln!(
+            "grok-fork: GROK_DISABLE_AUTOUPDATER is not allowed. Fork must take updates.\n\
+             Official grok is the fallback."
+        );
+        std::process::exit(1);
+    }
+    if !fork_sync_token_ok() {
+        eprintln!(
+            "grok-fork: refused to start without a successful launcher sync (GROK_FORK_SYNC_OK).\n\
+             Run `grok-fork`, not this binary. Official grok is the fallback."
+        );
+        std::process::exit(1);
+    }
+}
+
 /// Central gate for auto-update checks; add new suppression rules here, not at call sites.
 fn should_check_for_updates(no_auto_update_flag: bool) -> bool {
+    if xai_grok_pager::brand::is_fork() {
+        // CDN artifacts are official `grok`. Fork updates are the launcher
+        // rebase+rebuild; that path cannot be skipped (see refuse_fork_*).
+        return false;
+    }
     if cfg!(debug_assertions) {
         return false;
     }
     if no_auto_update_flag {
         return false;
     }
-    !std::env::var_os("GROK_DISABLE_AUTOUPDATER")
-        .is_some_and(|v| env_flag_enabled(&v.to_string_lossy()))
+    !autoupdater_env_disabled()
 }
 /// Gate for the stdio agent's background auto-update: only the direct stdio agent, from the managed install.
 /// Other modes update in `run_agent_command`.
@@ -3085,6 +3129,17 @@ mod tests {
         assert!(!is_managed_install(Some(pinned), &home));
         let _ = std::fs::remove_dir_all(&home);
     }
+    #[test]
+    fn env_flag_enabled_treats_common_falsy_as_off() {
+        assert!(env_flag_enabled("1"));
+        assert!(env_flag_enabled("true"));
+        assert!(!env_flag_enabled(""));
+        assert!(!env_flag_enabled("0"));
+        assert!(!env_flag_enabled("false"));
+        assert!(!env_flag_enabled("off"));
+        assert!(!env_flag_enabled("no"));
+    }
+
     /// Pins the gate composition; a dropped conjunct fails its named case.
     #[test]
     fn stdio_auto_update_requires_direct_stdio_enabled_and_managed() {

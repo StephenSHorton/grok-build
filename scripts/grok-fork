@@ -2,7 +2,11 @@
 # grok-fork launcher. Does not overwrite official `grok`.
 #
 # Install this on PATH as `grok-fork` (Windows: grok-fork.cmd → grok-fork.ps1).
-# Official auto-update stays off so a stock download cannot replace the fork.
+# Fork updates are git fetch + rebase onto xai-org/grok-build + cargo rebuild.
+# That path cannot be skipped. Any failure exits 1 and does not exec the TUI —
+# official `grok` on PATH is the fallback. There is no GROK_SKIP_* / no
+# GROK_DISABLE_AUTOUPDATER; the binary also refuses to start without
+# GROK_FORK_SYNC_OK from a successful pass here.
 #
 # On every start (one pass, one rebuild max):
 #   1. git fetch origin/main  (this GitHub fork)
@@ -18,9 +22,6 @@
 # Never changes the caller's working directory — git/cargo run under $REPO
 # via git -C / subshells so Grok opens in the directory you launched from.
 #
-# Skip sync/rebuild:  GROK_SKIP_SYNC=1 grok-fork ...
-# Skip rebuild only:  GROK_SKIP_REBUILD=1 grok-fork ...
-# Skip origin push:   GROK_SKIP_PUSH=1 grok-fork ...
 # Stock solid bg:     GROK_SOLID_BG=1 grok-fork ...
 
 set -uo pipefail
@@ -58,18 +59,16 @@ UPSTREAM_REF="${GROK_UPSTREAM_REF:-main}"
 BIN="${GROK_FORK_BIN:-$REPO/target/release/xai-grok-pager}"
 STAMP="${GROK_FORK_STAMP:-$REPO/.fork-built-at}"
 LOCK_DIR="${GROK_FORK_LOCK:-$REPO/.fork-launch.lock}"
-STATUS_FILE="${GROK_FORK_STATUS_FILE:-$REPO/.fork-upstream-status}"
+LOCK_WAIT_SECS="${GROK_FORK_LOCK_WAIT_SECS:-1800}"
 
 # Directory the user launched from — restore before exec so agent CWD is correct.
 START_CWD=$PWD
 
 export PATH="${HOME}/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:${PATH}"
 export GROK_PROCESS_BRAND="${GROK_PROCESS_BRAND:-fork}"
-export GROK_DISABLE_AUTOUPDATER="${GROK_DISABLE_AUTOUPDATER:-1}"
 export GROK_MCP_CHANNELS="${GROK_MCP_CHANNELS:-1}"
 export GROK_FORK=1
 export GROK_FORK_REPO="$REPO"
-export GROK_FORK_STATUS_FILE="$STATUS_FILE"
 export GROK_ORIGIN_REMOTE="$ORIGIN_REMOTE"
 export GROK_ORIGIN_REF="$ORIGIN_REF"
 export GROK_UPSTREAM_REMOTE="$UPSTREAM_REMOTE"
@@ -77,23 +76,27 @@ export GROK_UPSTREAM_REF="$UPSTREAM_REF"
 
 log() { printf '[grok-fork] %s\n' "$*" >&2; }
 
-g() { git -C "$REPO" "$@"; }
-
-clear_status() { rm -f "$STATUS_FILE" 2>/dev/null || true; }
-
-write_status() {
-  local kind="$1" behind="${2:-}" tip="${3:-}" message="${4:-}"
-  {
-    echo "kind=${kind}"
-    [[ -n "$behind" ]] && echo "behind=${behind}"
-    [[ -n "$tip" ]] && echo "tip=${tip}"
-    [[ -n "$message" ]] && echo "message=${message}"
-  } >"$STATUS_FILE" 2>/dev/null || true
+die() {
+  log "error: $*"
+  log "fork refused to start. Official grok is still on PATH as the fallback."
+  exit 1
 }
 
-# Short lock wait — never block launch for minutes. Recover stale locks
-# left behind when a previous launcher was killed (SIGKILL / crash) so we
-# don't sit silent for 15s every subsequent start.
+g() { git -C "$REPO" "$@"; }
+
+refuse_disabled_update_env() {
+  if [[ "${GROK_SKIP_SYNC:-}" == "1" || "${GROK_SKIP_REBUILD:-}" == "1" || "${GROK_SKIP_PUSH:-}" == "1" ]]; then
+    die "GROK_SKIP_SYNC / GROK_SKIP_REBUILD / GROK_SKIP_PUSH are not allowed — fork must take updates"
+  fi
+  case "${GROK_DISABLE_AUTOUPDATER:-}" in
+    ''|0|false|off|no|FALSE|OFF|NO) ;;
+    *) die "GROK_DISABLE_AUTOUPDATER is not allowed — fork must take updates" ;;
+  esac
+}
+
+# Wait for another launch's sync/rebuild (cargo can take a while). Recover
+# stale locks left behind when a previous launcher was killed. Die rather
+# than skip the update if the lock is still held after LOCK_WAIT_SECS.
 _lock_holder_alive() {
   local pid=""
   [[ -f "$LOCK_DIR/pid" ]] || return 1
@@ -121,9 +124,8 @@ acquire_lock() {
     elif [[ $((waited % 5)) -eq 0 ]]; then
       log "still waiting for launch lock (${waited}s) …"
     fi
-    if [[ $waited -ge 15 ]]; then
-      log "another launch is still syncing — skipping sync this time"
-      return 1
+    if [[ $waited -ge $LOCK_WAIT_SECS ]]; then
+      die "another launch is still syncing after ${LOCK_WAIT_SECS}s — not starting a stale fork"
     fi
     sleep 1
     waited=$((waited + 1))
@@ -187,18 +189,16 @@ unique_subjects() {
 # Does not push here (push happens after a successful upstream rebase).
 integrate_origin() {
   if ! g remote get-url "$ORIGIN_REMOTE" &>/dev/null; then
-    log "no remote '$ORIGIN_REMOTE' — skipping fork pull"
-    return 0
+    die "no remote '$ORIGIN_REMOTE' — cannot pull fork"
   fi
 
   local origin_tip
   if ! origin_tip=$(g rev-parse "$ORIGIN_REMOTE/$ORIGIN_REF" 2>/dev/null); then
-    log "warning: missing $ORIGIN_REMOTE/$ORIGIN_REF after fetch — skipping fork pull"
-    return 0
+    die "missing $ORIGIN_REMOTE/$ORIGIN_REF after fetch — cannot pull fork"
   fi
 
   local head base origin_short behind
-  head=$(g rev-parse HEAD 2>/dev/null) || return 0
+  head=$(g rev-parse HEAD 2>/dev/null) || die "could not read HEAD"
   origin_short=$(g rev-parse --short "$ORIGIN_REMOTE/$ORIGIN_REF" 2>/dev/null || echo "")
 
   if [[ "$head" == "$origin_tip" ]]; then
@@ -206,7 +206,7 @@ integrate_origin() {
     return 0
   fi
 
-  base=$(g merge-base HEAD "$ORIGIN_REMOTE/$ORIGIN_REF" 2>/dev/null) || return 0
+  base=$(g merge-base HEAD "$ORIGIN_REMOTE/$ORIGIN_REF" 2>/dev/null) || die "could not find merge-base with origin"
 
   if [[ "$base" == "$head" ]]; then
     # origin is ahead of us — fast-forward only.
@@ -216,10 +216,7 @@ integrate_origin() {
       log "fast-forward complete ($(g rev-parse --short HEAD 2>/dev/null || echo '?'))"
       return 0
     fi
-    log "warning: fast-forward from origin failed — launching current tree"
-    write_status "origin_ff_failed" "$behind" "$origin_short" \
-      "could not fast-forward onto $ORIGIN_REMOTE/$ORIGIN_REF — fix git state in fork repo"
-    return 0
+    die "could not fast-forward onto $ORIGIN_REMOTE/$ORIGIN_REF"
   fi
 
   if [[ "$base" == "$origin_tip" ]]; then
@@ -241,31 +238,21 @@ integrate_origin() {
       log "reset complete ($(g rev-parse --short HEAD 2>/dev/null || echo '?'))"
       return 0
     fi
-    log "warning: reset to origin failed — launching current tree"
-    write_status "origin_reset_failed" "$behind" "$origin_short" \
-      "could not reset onto rewritten $ORIGIN_REMOTE/$ORIGIN_REF"
-    return 0
+    die "could not reset onto rewritten $ORIGIN_REMOTE/$ORIGIN_REF"
   fi
 
-  log "origin and local have diverged (+$behind on origin; unique local commits kept)"
-  write_status "origin_diverged" "$behind" "$origin_short" \
-    "local and $ORIGIN_REMOTE/$ORIGIN_REF diverged — merge/rebase in the fork repo, then relaunch"
-  return 0
+  die "origin and local have diverged (+$behind on origin; unique local commits). Merge/rebase in $REPO, then relaunch"
 }
 
 push_rebased_origin() {
-  if [[ "${GROK_SKIP_PUSH:-}" == "1" ]]; then
-    log "skipping push of rebased $BRANCH (GROK_SKIP_PUSH=1)"
-    return 0
-  fi
   if ! g remote get-url "$ORIGIN_REMOTE" &>/dev/null; then
-    return 0
+    die "no remote '$ORIGIN_REMOTE' — cannot publish rebased $BRANCH"
   fi
   log "publishing rebased $BRANCH to $ORIGIN_REMOTE (force-with-lease)"
   if g push --force-with-lease -- "$ORIGIN_REMOTE" "HEAD:refs/heads/$ORIGIN_REF" >/dev/null 2>&1; then
     log "pushed $BRANCH → $ORIGIN_REMOTE/$ORIGIN_REF"
   else
-    log "warning: could not push rebased $BRANCH — other machines may stay diverged until you push"
+    log "warning: could not push rebased $BRANCH — this machine is updated; other machines may stay diverged until you push"
   fi
 }
 
@@ -274,17 +261,13 @@ push_rebased_origin() {
 # experiment cannot stall every launch on an unrelated upstream conflict.
 integrate_upstream() {
   if ! g remote get-url "$UPSTREAM_REMOTE" &>/dev/null; then
-    log "warning: missing remote '$UPSTREAM_REMOTE' — skipping upstream rebase"
-    return 0
+    die "missing remote '$UPSTREAM_REMOTE' — cannot rebase onto upstream"
   fi
 
   local head up base behind up_short head_before
-  head=$(g rev-parse HEAD 2>/dev/null) || return 0
-  up=$(g rev-parse "$UPSTREAM_REMOTE/$UPSTREAM_REF" 2>/dev/null) || {
-    log "warning: missing $UPSTREAM_REMOTE/$UPSTREAM_REF after fetch — skipping upstream rebase"
-    return 0
-  }
-  base=$(g merge-base HEAD "$UPSTREAM_REMOTE/$UPSTREAM_REF" 2>/dev/null) || return 0
+  head=$(g rev-parse HEAD 2>/dev/null) || die "could not read HEAD"
+  up=$(g rev-parse "$UPSTREAM_REMOTE/$UPSTREAM_REF" 2>/dev/null) || die "missing $UPSTREAM_REMOTE/$UPSTREAM_REF after fetch"
+  base=$(g merge-base HEAD "$UPSTREAM_REMOTE/$UPSTREAM_REF" 2>/dev/null) || die "could not find merge-base with upstream"
   up_short=$(g rev-parse --short "$UPSTREAM_REMOTE/$UPSTREAM_REF" 2>/dev/null || echo "")
 
   if [[ "$base" == "$up" ]]; then
@@ -311,11 +294,9 @@ integrate_upstream() {
   if [[ $rebase_ok -eq 0 ]]; then
     local conflicts
     conflicts=$(g diff --name-only --diff-filter=U 2>/dev/null | tr '\n' ' ')
-    log "rebase hit conflicts${conflicts:+ ($conflicts)} — aborting and starting Grok with a notice"
+    log "rebase hit conflicts${conflicts:+ ($conflicts)} — aborting"
     g rebase --abort 2>/dev/null || true
-    write_status "rebase_conflict" "$behind" "$up_short" \
-      "upstream update could not be rebased automatically (+${behind}) — fix in the fork repo, then relaunch"
-    return 0
+    die "upstream rebase failed (+${behind} at $up_short). Fix conflicts in $REPO, then relaunch. Official grok is the fallback."
   fi
   log "rebase complete ($(g rev-parse --short HEAD 2>/dev/null || echo '?'))"
   if [[ "$(g rev-parse HEAD 2>/dev/null || true)" != "$head_before" ]]; then
@@ -324,11 +305,10 @@ integrate_upstream() {
   return 0
 }
 
-# Single sync pass: fetch both remotes, apply origin then upstream, one status clear on full success.
+# Single sync pass: fetch both remotes, apply origin then upstream. Fail closed.
 sync_remotes() {
   if [[ ! -d "$REPO/.git" ]]; then
-    log "warning: repo missing ($REPO) — launching without sync"
-    return 0
+    die "repo missing ($REPO) — cannot sync"
   fi
 
   local branch
@@ -336,10 +316,7 @@ sync_remotes() {
   if [[ -n "$branch" && "$branch" != "$BRANCH" ]]; then
     log "checking out $BRANCH (was on $branch)"
     if ! g checkout "$BRANCH" 2>/dev/null; then
-      log "warning: could not checkout $BRANCH — launching current tree"
-      write_status "checkout_failed" "" "" \
-        "could not checkout $BRANCH — fix git state in fork repo, then relaunch"
-      return 0
+      die "could not checkout $BRANCH — fix git state in $REPO, then relaunch"
     fi
   fi
 
@@ -350,46 +327,30 @@ sync_remotes() {
     if g stash push -m "grok-fork-launch $(date -u +%Y-%m-%dT%H:%MZ)" >/dev/null 2>&1; then
       stashed=1
     else
-      log "warning: stash failed — skipping sync this launch"
-      write_status "stash_failed" "" "" \
-        "local tracked changes blocked auto-sync — commit/stash in fork repo or relaunch"
-      return 0
+      die "stash failed — local tracked changes blocked auto-sync. Commit/stash in $REPO, then relaunch"
     fi
   elif [[ -n $(g status --porcelain 2>/dev/null) ]]; then
     log "untracked files present (ignored for stash/sync)"
   fi
 
-  local fetch_ok=1
   log "fetching $ORIGIN_REMOTE/$ORIGIN_REF (fork) + $UPSTREAM_REMOTE/$UPSTREAM_REF …"
   # Explicit +refspec so a rewritten origin/main (force-with-lease after an
   # upstream rebase) actually moves the remote-tracking ref. `git fetch origin main`
   # only writes FETCH_HEAD and will miss fork-main updates.
-  if g remote get-url "$ORIGIN_REMOTE" &>/dev/null; then
-    if ! g fetch --quiet --prune -- "$ORIGIN_REMOTE" \
-      "+refs/heads/${ORIGIN_REF}:refs/remotes/${ORIGIN_REMOTE}/${ORIGIN_REF}" 2>/dev/null; then
-      log "warning: fetch $ORIGIN_REMOTE failed (offline?)"
-      fetch_ok=0
-    fi
-  else
-    log "warning: missing remote '$ORIGIN_REMOTE' — cannot pull fork main"
+  if ! g remote get-url "$ORIGIN_REMOTE" &>/dev/null; then
+    die "missing remote '$ORIGIN_REMOTE' — cannot pull fork main"
   fi
-  if g remote get-url "$UPSTREAM_REMOTE" &>/dev/null; then
-    if ! g fetch --quiet --prune -- "$UPSTREAM_REMOTE" \
-      "+refs/heads/${UPSTREAM_REF}:refs/remotes/${UPSTREAM_REMOTE}/${UPSTREAM_REF}" 2>/dev/null; then
-      log "warning: fetch $UPSTREAM_REMOTE failed (offline?)"
-      fetch_ok=0
-    fi
-  else
-    log "warning: missing remote '$UPSTREAM_REMOTE'"
+  if ! g fetch --quiet --prune -- "$ORIGIN_REMOTE" \
+    "+refs/heads/${ORIGIN_REF}:refs/remotes/${ORIGIN_REMOTE}/${ORIGIN_REF}" 2>/dev/null; then
+    die "fetch $ORIGIN_REMOTE failed (offline?). Fork will not start stale."
   fi
-
-  if [[ $fetch_ok -eq 0 ]]; then
-    # Still try integrate with whatever refs we already have cached.
-    log "continuing with last-known remote tips where available"
+  if ! g remote get-url "$UPSTREAM_REMOTE" &>/dev/null; then
+    die "missing remote '$UPSTREAM_REMOTE'"
   fi
-
-  # Clear prior soft status before integrate; integrate may re-set on failure.
-  clear_status
+  if ! g fetch --quiet --prune -- "$UPSTREAM_REMOTE" \
+    "+refs/heads/${UPSTREAM_REF}:refs/remotes/${UPSTREAM_REMOTE}/${UPSTREAM_REF}" 2>/dev/null; then
+    die "fetch $UPSTREAM_REMOTE failed (offline?). Fork will not start stale."
+  fi
 
   integrate_origin
   integrate_upstream
@@ -398,7 +359,7 @@ sync_remotes() {
     if g stash pop >/dev/null 2>&1; then
       log "restored stashed changes"
     else
-      log "warning: stash pop had conflicts — check git status in $REPO"
+      die "stash pop had conflicts — check git status in $REPO"
     fi
   fi
 }
@@ -416,14 +377,7 @@ rebuild_if_needed() {
     fi
     return 0
   fi
-  if [[ ! -x "$BIN" ]] && ! command -v cargo >/dev/null 2>&1; then
-    log "error: no binary and no cargo — cannot build"
-    return 1
-  fi
-  if ! command -v cargo >/dev/null 2>&1; then
-    log "warning: cargo missing; using existing binary"
-    return 0
-  fi
+  command -v cargo >/dev/null 2>&1 || die "cargo missing — cannot rebuild fork"
   if ! command -v dotslash >/dev/null 2>&1; then
     log "warning: dotslash not found; build may need protoc on PATH"
   fi
@@ -436,8 +390,7 @@ rebuild_if_needed() {
     log "build ok → $BIN"
     return 0
   fi
-  log "warning: build failed — will try existing binary if any"
-  return 1
+  die "release build failed — not starting a stale fork"
 }
 
 # Copy fork-managed markdown into $GROK_HOME/rules so every Grok session (fork
@@ -467,41 +420,25 @@ install_home_rules() {
 
 launch() {
   if [[ ! -x "$BIN" ]]; then
-    log "error: no fork binary at $BIN"
-    log "  build: cd $REPO && cargo build -p xai-grok-pager-bin --release"
-    log "  or use: grok-official"
-    exit 1
+    die "no fork binary at $BIN — build with: cargo build -p xai-grok-pager-bin --release"
   fi
   cd "$START_CWD" 2>/dev/null || true
+  export GROK_FORK_SYNC_OK=1
   exec "$BIN" "$@"
 }
 
 main() {
   log "launching from $REPO"
+  refuse_disabled_update_env
 
   if [[ ! -d "$REPO/.git" ]]; then
-    log "warning: not a git repo at $REPO — launching binary only"
-    install_home_rules
-    launch "$@"
+    die "not a git repo at $REPO — cannot sync"
   fi
 
-  if [[ "${GROK_SKIP_SYNC:-}" != "1" ]]; then
-    if acquire_lock; then
-      # One sync pass (origin + upstream) then at most one rebuild.
-      sync_remotes || log "warning: sync had errors — continuing"
-      if [[ "${GROK_SKIP_REBUILD:-}" != "1" ]]; then
-        rebuild_if_needed || true
-      fi
-      release_lock
-    fi
-  elif [[ "${GROK_SKIP_REBUILD:-}" != "1" ]]; then
-    if acquire_lock; then
-      rebuild_if_needed || true
-      release_lock
-    fi
-  else
-    log "sync+rebuild skipped (GROK_SKIP_SYNC / GROK_SKIP_REBUILD)"
-  fi
+  acquire_lock || die "could not acquire launch lock"
+  sync_remotes
+  rebuild_if_needed
+  release_lock
 
   install_home_rules
   log "exec $BIN"
