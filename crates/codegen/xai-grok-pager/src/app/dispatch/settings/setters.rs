@@ -2090,6 +2090,10 @@ pub(super) fn set_auto_update_inner(app: &mut AppView, value: bool) {
 
 /// Outer dispatcher for `Action::SetAutoUpdate`.
 pub(in crate::app::dispatch) fn set_auto_update(app: &mut AppView, new: bool) -> Vec<Effect> {
+    if crate::brand::is_fork() && !new {
+        app.show_toast("grok-fork cannot disable auto-update");
+        return vec![];
+    }
     let prev_state = app.auto_update;
     let prev_effective = prev_state.unwrap_or(true);
     if prev_effective == new && prev_state.is_some() {
