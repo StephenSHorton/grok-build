@@ -1,8 +1,13 @@
 //! Process identity that survives the fullscreen TUI.
 //!
-//! Official `grok` leaves `GROK_PROCESS_BRAND` unset. The Windows `grok-fork`
+//! Official `grok` leaves `GROK_PROCESS_BRAND` unset. The `grok-fork`
 //! launcher sets it to `fork` so the tab title and welcome badge stay distinct
 //! after alternate-screen clears the launch log.
+//!
+//! Fork updates are the launcher (git rebase onto xai-org/grok-build + cargo
+//! rebuild), not the CDN auto-updater. The branded process refuses
+//! `--no-auto-update` / `GROK_DISABLE_AUTOUPDATER` and will not start without
+//! `GROK_FORK_SYNC_OK` from a successful launcher pass.
 
 use std::sync::OnceLock;
 

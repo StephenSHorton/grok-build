@@ -4,7 +4,9 @@
   grok-fork launcher for Windows. Does not overwrite official grok.
 
 .DESCRIPTION
-  On every start (unless skipped) - one pass, one rebuild max:
+  On every start - one pass, one rebuild max. Fail closed: any sync/rebuild
+  failure exits 1 and does not exec the TUI. Official grok is the fallback.
+  GROK_SKIP_* and GROK_DISABLE_AUTOUPDATER are rejected.
     1. git fetch origin/main (this GitHub fork - StephenSHorton/grok-build)
     2. git fetch upstream/main (xai-org/grok-build)
     3. fast-forward onto origin/main; reset to origin when it is a rewrite with no unique local commits
@@ -12,19 +14,16 @@
     5. force-with-lease push of a successful rebase so other machines can fast-forward
     6. rebuild release binary only when rust sources changed (or binary missing)
     7. install scripts/home-rules/*.md into $GROK_HOME/rules (global Grok rules)
-    8. exec the in-repo fork binary with all args
+    8. exec the in-repo fork binary with GROK_FORK_SYNC_OK=1
 
-  Skip sync/rebuild:  $env:GROK_SKIP_SYNC = '1'
-  Skip rebuild only:  $env:GROK_SKIP_REBUILD = '1'  (still fetches/reports)
-  Skip origin push:   $env:GROK_SKIP_PUSH = '1'
   Stock solid bg:     $env:GROK_SOLID_BG = '1'
 #>
 
 $ErrorActionPreference = 'Stop'
 
-# Brand the TUI as grok-fork and keep official auto-update from replacing us.
+# Brand the TUI as grok-fork. CDN auto-update is the official artifact channel;
+# this launcher is the fork updater and cannot be skipped.
 if (-not $env:GROK_PROCESS_BRAND) { $env:GROK_PROCESS_BRAND = 'fork' }
-if (-not $env:GROK_DISABLE_AUTOUPDATER) { $env:GROK_DISABLE_AUTOUPDATER = '1' }
 if (-not $env:GROK_MCP_CHANNELS) { $env:GROK_MCP_CHANNELS = '1' }
 
 # Default repo = parent of this script (works for any clone path).
@@ -63,7 +62,21 @@ function Write-ForkLog([string]$Message) {
 
 function Die([string]$Message) {
     Write-ForkLog "error: $Message"
+    Write-ForkLog "fork refused to start. Official grok is still on PATH as the fallback."
     exit 1
+}
+
+function Assert-UpdatesNotDisabled {
+    if ($env:GROK_SKIP_SYNC -eq '1' -or $env:GROK_SKIP_REBUILD -eq '1' -or $env:GROK_SKIP_PUSH -eq '1') {
+        Die 'GROK_SKIP_SYNC / GROK_SKIP_REBUILD / GROK_SKIP_PUSH are not allowed - fork must take updates'
+    }
+    $disable = $env:GROK_DISABLE_AUTOUPDATER
+    if ($disable) {
+        switch ($disable.Trim().ToLowerInvariant()) {
+            { $_ -in @('', '0', 'false', 'off', 'no') } { break }
+            default { Die 'GROK_DISABLE_AUTOUPDATER is not allowed - fork must take updates' }
+        }
+    }
 }
 
 # Git for Windows runs GIT_SEQUENCE_EDITOR via sh, which eats backslashes.
@@ -152,10 +165,16 @@ function Clear-Lock {
     }
 }
 
-# Short lock wait - never block launch for minutes. Recover stale locks left
-# behind when a previous launcher was killed so we do not sit silent.
-# Returns $true if this process owns the lock.
+# Wait for another launch's sync/rebuild. Recover stale locks. Die rather
+# than skip the update if the lock is still held after the wait.
 function Acquire-Lock {
+    $waitLimit = 1800
+    if ($env:GROK_FORK_LOCK_WAIT_SECS) {
+        $parsed = 0
+        if ([int]::TryParse($env:GROK_FORK_LOCK_WAIT_SECS, [ref]$parsed) -and $parsed -gt 0) {
+            $waitLimit = $parsed
+        }
+    }
     $waited = 0
     while ($true) {
         try {
@@ -179,9 +198,8 @@ function Acquire-Lock {
             } elseif (($waited % 5) -eq 0) {
                 Write-ForkLog "still waiting for launch lock (${waited}s) ..."
             }
-            if ($waited -ge 15) {
-                Write-ForkLog 'another launch is still syncing - skipping sync this time'
-                return $false
+            if ($waited -ge $waitLimit) {
+                Die "another launch is still syncing after ${waitLimit}s - not starting a stale fork"
             }
             Start-Sleep -Seconds 1
             $waited++
@@ -260,31 +278,27 @@ function Get-UniqueSubjects([string]$LeftRange, [string]$RightRange) {
 }
 
 function Push-RebasedOrigin {
-    if ($env:GROK_SKIP_PUSH -eq '1') {
-        Write-ForkLog "skipping push of rebased $Branch (GROK_SKIP_PUSH=1)"
-        return
-    }
     $remotes = & git remote
-    if ($remotes -notcontains $OriginRemote) { return }
+    if ($remotes -notcontains $OriginRemote) {
+        Die "no remote '$OriginRemote' - cannot publish rebased $Branch"
+    }
     Write-ForkLog "publishing rebased $Branch to $OriginRemote (force-with-lease)"
     & git push --force-with-lease -- $OriginRemote "HEAD:refs/heads/$OriginRef" 2>$null | Out-Null
     if ($LASTEXITCODE -eq 0) {
         Write-ForkLog "pushed $Branch -> $OriginRemote/$OriginRef"
     } else {
-        Write-ForkLog "warning: could not push rebased $Branch - other machines may stay diverged until you push"
+        Write-ForkLog "warning: could not push rebased $Branch - this machine is updated; other machines may stay diverged until you push"
     }
 }
 
 function Integrate-Origin {
     $remotes = & git remote
     if ($remotes -notcontains $OriginRemote) {
-        Write-ForkLog "no remote '$OriginRemote' - skipping fork pull"
-        return
+        Die "no remote '$OriginRemote' - cannot pull fork"
     }
     $originTip = & git rev-parse "$OriginRemote/$OriginRef" 2>$null
     if ($LASTEXITCODE -ne 0 -or -not $originTip) {
-        Write-ForkLog "warning: missing $OriginRemote/$OriginRef after fetch - skipping fork pull"
-        return
+        Die "missing $OriginRemote/$OriginRef after fetch - cannot pull fork"
     }
     $originTip = $originTip.Trim()
     $head = (& git rev-parse HEAD).Trim()
@@ -303,7 +317,7 @@ function Integrate-Origin {
             $short = (& git rev-parse --short HEAD).Trim()
             Write-ForkLog "fast-forward complete ($short)"
         } else {
-            Write-ForkLog 'warning: fast-forward from origin failed - launching current tree'
+            Die "could not fast-forward onto $OriginRemote/$OriginRef"
         }
         return
     }
@@ -323,23 +337,21 @@ function Integrate-Origin {
             $short = (& git rev-parse --short HEAD).Trim()
             Write-ForkLog "reset complete ($short)"
         } else {
-            Write-ForkLog 'warning: reset to origin failed - launching current tree'
+            Die "could not reset onto rewritten $OriginRemote/$OriginRef"
         }
         return
     }
-    Write-ForkLog "origin and local have diverged (+$behind on origin; unique local commits kept)"
+    Die "origin and local have diverged (+$behind on origin; unique local commits). Merge/rebase in $Repo, then relaunch"
 }
 
 function Integrate-Upstream {
     $remotes = & git remote
     if ($remotes -notcontains $UpstreamRemote) {
-        Write-ForkLog "warning: missing remote '$UpstreamRemote' - skipping upstream rebase"
-        return
+        Die "missing remote '$UpstreamRemote' - cannot rebase onto upstream"
     }
     $up = & git rev-parse "$UpstreamRemote/$UpstreamRef" 2>$null
     if ($LASTEXITCODE -ne 0 -or -not $up) {
-        Write-ForkLog "warning: missing $UpstreamRemote/$UpstreamRef after fetch - skipping upstream rebase"
-        return
+        Die "missing $UpstreamRemote/$UpstreamRef after fetch"
     }
     $up = $up.Trim()
     $base = (& git merge-base HEAD "$UpstreamRemote/$UpstreamRef").Trim()
@@ -389,12 +401,12 @@ function Integrate-Upstream {
     }
     if (-not $rebaseOk) {
         if (Test-RebaseInProgress) {
-            Write-ForkLog 'rebase failed - aborting and continuing with current tree'
+            Write-ForkLog 'rebase failed - aborting'
             Abort-RebaseIfNeeded
         } else {
-            Write-ForkLog 'rebase did not start (editor/setup failed) - continuing with current tree'
+            Write-ForkLog 'rebase did not start (editor/setup failed)'
         }
-        return
+        Die "upstream rebase failed (+$behind). Fix conflicts in $Repo, then relaunch."
     }
     $short = (& git rev-parse --short HEAD).Trim()
     Write-ForkLog "rebase complete ($short)"
@@ -414,8 +426,7 @@ function Sync-Remotes {
         # upstream snapshot (no scripts/grok-fork.ps1). Never start another
         # checkout/rebase until that is cleaned up.
         if (Test-RebaseInProgress) {
-            Write-ForkLog 'git rebase already in progress - skipping sync (abort or finish it, then relaunch)'
-            return
+            Die 'git rebase already in progress - abort or finish it, then relaunch'
         }
 
         $current = (& git rev-parse --abbrev-ref HEAD).Trim()
@@ -432,6 +443,9 @@ function Sync-Remotes {
             Write-ForkLog 'stashing tracked local changes for sync (untracked left alone)'
             $stampMsg = "grok-fork-launch $([DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mmZ'))"
             & git stash push -m $stampMsg | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                Die "stash failed - local tracked changes blocked auto-sync. Commit/stash in $Repo, then relaunch"
+            }
             $stashed = $true
         }
 
@@ -440,20 +454,18 @@ function Sync-Remotes {
         # Explicit +refspec so a rewritten origin/main (force-with-lease after an
         # upstream rebase) actually moves the remote-tracking ref. `git fetch origin main`
         # only writes FETCH_HEAD and will miss fork-main updates.
-        if ($remotes -contains $OriginRemote) {
-            $originSpec = "+refs/heads/${OriginRef}:refs/remotes/${OriginRemote}/${OriginRef}"
-            & git fetch --quiet --prune -- $OriginRemote $originSpec 2>$null
-            if ($LASTEXITCODE -ne 0) { Write-ForkLog "warning: fetch $OriginRemote failed (offline?)" }
-        } else {
-            Write-ForkLog "warning: missing remote '$OriginRemote' - cannot pull fork main"
+        if ($remotes -notcontains $OriginRemote) {
+            Die "missing remote '$OriginRemote' - cannot pull fork main"
         }
-        if ($remotes -contains $UpstreamRemote) {
-            $upSpec = "+refs/heads/${UpstreamRef}:refs/remotes/${UpstreamRemote}/${UpstreamRef}"
-            & git fetch --quiet --prune -- $UpstreamRemote $upSpec 2>$null
-            if ($LASTEXITCODE -ne 0) { Write-ForkLog "warning: fetch $UpstreamRemote failed (offline?)" }
-        } else {
-            Write-ForkLog "warning: missing remote '$UpstreamRemote'"
+        $originSpec = "+refs/heads/${OriginRef}:refs/remotes/${OriginRemote}/${OriginRef}"
+        & git fetch --quiet --prune -- $OriginRemote $originSpec 2>$null
+        if ($LASTEXITCODE -ne 0) { Die "fetch $OriginRemote failed (offline?). Fork will not start stale." }
+        if ($remotes -notcontains $UpstreamRemote) {
+            Die "missing remote '$UpstreamRemote'"
         }
+        $upSpec = "+refs/heads/${UpstreamRef}:refs/remotes/${UpstreamRemote}/${UpstreamRef}"
+        & git fetch --quiet --prune -- $UpstreamRemote $upSpec 2>$null
+        if ($LASTEXITCODE -ne 0) { Die "fetch $UpstreamRemote failed (offline?). Fork will not start stale." }
 
         Integrate-Origin
         Integrate-Upstream
@@ -470,7 +482,7 @@ function Sync-Remotes {
             if ($popCode -eq 0) {
                 Write-ForkLog 'restored stashed changes'
             } else {
-                Write-ForkLog "warning: stash pop had conflicts - check 'git stash list' / status"
+                Die "stash pop had conflicts - check git status in $Repo"
             }
         }
     } finally {
@@ -553,22 +565,19 @@ function Install-HomeRules {
 
 function Main {
     Write-ForkLog "launching from $Repo"
+    Assert-UpdatesNotDisabled
     if (-not (Test-Path (Join-Path $Repo '.git'))) {
         Die "not a git repo: $Repo"
     }
 
-    $skipSync = $env:GROK_SKIP_SYNC -eq '1'
-    $skipRebuild = $env:GROK_SKIP_REBUILD -eq '1'
-
-    if (-not $skipSync -or -not $skipRebuild) {
-        if (Acquire-Lock) {
-            try {
-                if (-not $skipSync) { Sync-Remotes }
-                if (-not $skipRebuild) { Rebuild-IfNeeded }
-            } finally {
-                Release-Lock
-            }
-        }
+    if (-not (Acquire-Lock)) {
+        Die 'could not acquire launch lock'
+    }
+    try {
+        Sync-Remotes
+        Rebuild-IfNeeded
+    } finally {
+        Release-Lock
     }
 
     if (-not (Test-Path $Bin)) {
@@ -577,6 +586,7 @@ function Main {
 
     Install-HomeRules
 
+    $env:GROK_FORK_SYNC_OK = '1'
     $run = $Bin
     Write-ForkLog "exec $run"
     & $run @args
