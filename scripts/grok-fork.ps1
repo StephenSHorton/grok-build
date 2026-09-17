@@ -542,7 +542,7 @@ function Install-HomeRules {
     try {
         New-Item -ItemType Directory -Force -Path $dest | Out-Null
     } catch {
-        Write-ForkLog "warning: could not create $dest — skipping home-rules install"
+        Write-ForkLog "warning: could not create $dest - skipping home-rules install"
         return
     }
     Get-ChildItem -LiteralPath $src -Filter '*.md' -File -ErrorAction SilentlyContinue | ForEach-Object {
