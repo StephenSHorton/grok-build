@@ -65,6 +65,11 @@ LOCK_WAIT_SECS="${GROK_FORK_LOCK_WAIT_SECS:-1800}"
 START_CWD=$PWD
 
 export PATH="${HOME}/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:${PATH}"
+# /usr/bin/git is Xcode's. If the Xcode license isn't accepted, every git
+# command exits 69 and `remote get-url origin` looks like "missing origin".
+if [[ -d /Library/Developer/CommandLineTools ]]; then
+  export DEVELOPER_DIR="${DEVELOPER_DIR:-/Library/Developer/CommandLineTools}"
+fi
 export GROK_PROCESS_BRAND="${GROK_PROCESS_BRAND:-fork}"
 export GROK_MCP_CHANNELS="${GROK_MCP_CHANNELS:-1}"
 export GROK_FORK=1
@@ -189,7 +194,7 @@ unique_subjects() {
 # Does not push here (push happens after a successful upstream rebase).
 integrate_origin() {
   if ! g remote get-url "$ORIGIN_REMOTE" &>/dev/null; then
-    die "no remote '$ORIGIN_REMOTE' — cannot pull fork"
+    die "cannot read remote '$ORIGIN_REMOTE' ($(g remote get-url "$ORIGIN_REMOTE" 2>&1 | tr '\n' ' '))"
   fi
 
   local origin_tip
@@ -246,7 +251,7 @@ integrate_origin() {
 
 push_rebased_origin() {
   if ! g remote get-url "$ORIGIN_REMOTE" &>/dev/null; then
-    die "no remote '$ORIGIN_REMOTE' — cannot publish rebased $BRANCH"
+    die "cannot read remote '$ORIGIN_REMOTE' for push ($(g remote get-url "$ORIGIN_REMOTE" 2>&1 | tr '\n' ' '))"
   fi
   log "publishing rebased $BRANCH to $ORIGIN_REMOTE (force-with-lease)"
   if g push --force-with-lease -- "$ORIGIN_REMOTE" "HEAD:refs/heads/$ORIGIN_REF" >/dev/null 2>&1; then
@@ -261,7 +266,7 @@ push_rebased_origin() {
 # experiment cannot stall every launch on an unrelated upstream conflict.
 integrate_upstream() {
   if ! g remote get-url "$UPSTREAM_REMOTE" &>/dev/null; then
-    die "missing remote '$UPSTREAM_REMOTE' — cannot rebase onto upstream"
+    die "cannot read remote '$UPSTREAM_REMOTE' ($(g remote get-url "$UPSTREAM_REMOTE" 2>&1 | tr '\n' ' '))"
   fi
 
   local head up base behind up_short head_before
@@ -338,7 +343,7 @@ sync_remotes() {
   # upstream rebase) actually moves the remote-tracking ref. `git fetch origin main`
   # only writes FETCH_HEAD and will miss fork-main updates.
   if ! g remote get-url "$ORIGIN_REMOTE" &>/dev/null; then
-    die "missing remote '$ORIGIN_REMOTE' — cannot pull fork main"
+    die "cannot read remote '$ORIGIN_REMOTE' ($(g remote get-url "$ORIGIN_REMOTE" 2>&1 | tr '\n' ' '))"
   fi
   if ! g fetch --quiet --prune -- "$ORIGIN_REMOTE" \
     "+refs/heads/${ORIGIN_REF}:refs/remotes/${ORIGIN_REMOTE}/${ORIGIN_REF}" 2>/dev/null; then
