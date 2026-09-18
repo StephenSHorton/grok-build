@@ -130,7 +130,11 @@ impl xai_tool_runtime::Tool for SessionsOpenTool {
 }
 
 fn suzuri_pane_available() -> bool {
-    env_flag("SUZURI_FORK_SPLIT") || env_flag("SUZURI")
+    env_flag("SUZURI_FORK_SPLIT")
+        || env_flag("SUZURI")
+        || std::env::var("SUZURI_CONTROL_URL")
+            .ok()
+            .is_some_and(|v| !v.trim().is_empty())
 }
 
 fn env_flag(name: &str) -> bool {
