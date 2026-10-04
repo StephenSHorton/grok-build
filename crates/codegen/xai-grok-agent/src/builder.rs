@@ -3492,6 +3492,10 @@ mod tests {
             !jev_settings_for_tests().nudge_active(),
             "from_resolved must keep nudge off"
         );
+        assert!(
+            !jev_settings_for_tests().safety_active(),
+            "from_resolved must keep the safety check off"
+        );
         let toolset = agent.tool_bridge().toolset();
         let resources = toolset.resources.lock().await;
         assert!(

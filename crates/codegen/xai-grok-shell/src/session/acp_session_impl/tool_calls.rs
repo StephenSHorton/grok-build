@@ -1983,6 +1983,28 @@ impl SessionActor {
                 Decision::Allow | Decision::Ask => {}
             }
         }
+        if let Some(message) = self
+            .maybe_jev_safety_block(&access_kind, &call.function.name, &raw_input)
+            .await
+        {
+            let deny = format!("Tool `{}` was not executed: {message}", call.function.name);
+            self.handle_tool_not_executed(&call.id, &tool_call_id, deny)
+                .await?;
+            let (tool_input_value, tool_input_truncated) =
+                xai_grok_hooks::event::truncate_payload(raw_input.clone());
+            self.dispatch_hook(
+                xai_grok_hooks::event::HookEventName::PermissionDenied,
+                xai_grok_hooks::event::HookPayload::PermissionDenied {
+                    tool_name: resolved_tool_name.clone(),
+                    tool_use_id: tool_call_id.to_string(),
+                    tool_input: tool_input_value,
+                    tool_input_truncated,
+                },
+                None,
+            )
+            .await;
+            return Ok(Err(ToolLoop::Continue));
+        }
         let is_exit_plan_mode = matches!(&tool_input, ToolInput::ExitPlanMode(_));
         let is_file_backed_exit = is_file_backed_exit_plan_input(&tool_input);
         let is_cursor_switch_to_agent = false;
@@ -3363,6 +3385,39 @@ impl SessionActor {
             )
         })
     }
+    /// Optional Jev safety check. Flag off / no key / Jev faults: allow, no HTTP.
+    async fn maybe_jev_safety_block(
+        &self,
+        access_kind: &AccessKind,
+        tool_name: &str,
+        raw_input: &serde_json::Value,
+    ) -> Option<String> {
+        let settings = self
+            .rebuild_spec
+            .jev_settings
+            .as_ref()
+            .filter(|settings| settings.safety_active())?;
+        if !xai_grok_tools::jev_safety_applies(access_kind) {
+            return None;
+        }
+        let toolset = self.tool_bridge_handle().toolset();
+        let client = {
+            let resources = toolset.resources.lock().await;
+            resources
+                .get::<xai_grok_tools::implementations::grok_build::JevClient>()
+                .cloned()
+        };
+        let args = raw_input.to_string();
+        xai_grok_tools::implementations::grok_build::maybe_risk_check(
+            Some(settings),
+            client.as_ref(),
+            tool_name,
+            &args,
+        )
+        .await
+        .deny_detail()
+    }
+
     pub(super) async fn handle_tool_not_executed(
         &self,
         model_call_id: &str,

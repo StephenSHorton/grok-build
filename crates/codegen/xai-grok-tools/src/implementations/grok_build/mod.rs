@@ -43,7 +43,10 @@ pub mod web_fetch;
 pub mod web_search;
 pub mod workflow;
 pub use app_builder::AppBuilderDeployerConfig;
-pub use ask_jev::{ASK_JEV_TOOL_NAME, AskJevInput, AskJevTool, JevSettings};
+pub use ask_jev::{
+    ASK_JEV_TOOL_NAME, AskJevInput, AskJevTool, JevClient, JevSettings, SafetyVerdict,
+    maybe_risk_check,
+};
 pub use ask_user_question::AskUserQuestionTool;
 pub use bash::BashTool;
 pub use deploy_app::DEPLOY_APP_TOOL_NAME;

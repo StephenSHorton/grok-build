@@ -37,7 +37,7 @@ pub enum Error {
 
 /// Settings used to construct a [`Client`]. Empty / whitespace keys are disabled.
 /// Feature flags stay off unless the caller sets them; a key alone does not enable extras.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Settings {
     pub api_key: String,
     pub base_url: Option<String>,
@@ -46,6 +46,13 @@ pub struct Settings {
     pub nudge: bool,
     /// Emit the nudge every N successful mutates. `<= 0` disables. Default 2.
     pub nudge_every: i32,
+    /// Optional fail-open destructive-call check. Default off.
+    pub safety_check: bool,
+    /// Live noul at/above this value may deny when [`Self::allow_destructive`] is false.
+    /// `<= 0` means [`crate::DEFAULT_RISK_BLOCK`].
+    pub risk_block: f64,
+    /// When true, a live safety noul at/above `risk_block` does not deny. Default false.
+    pub allow_destructive: bool,
 }
 
 impl Settings {
@@ -65,6 +72,9 @@ impl Settings {
             model: model.filter(|model| !model.trim().is_empty()),
             nudge: false,
             nudge_every: 2,
+            safety_check: false,
+            risk_block: crate::DEFAULT_RISK_BLOCK,
+            allow_destructive: false,
         })
     }
 
@@ -75,6 +85,20 @@ impl Settings {
     /// Nudge runs only with a key, `nudge = true`, and `nudge_every > 0`.
     pub fn nudge_active(&self) -> bool {
         self.is_enabled() && self.nudge && self.nudge_every > 0
+    }
+
+    /// Safety check runs only with a key and `safety_check = true`.
+    pub fn safety_active(&self) -> bool {
+        self.is_enabled() && self.safety_check
+    }
+
+    /// Rock `riskAt`: non-positive values fall back to [`crate::DEFAULT_RISK_BLOCK`].
+    pub fn risk_block_or_default(&self) -> f64 {
+        if self.risk_block > 0.0 {
+            self.risk_block
+        } else {
+            crate::DEFAULT_RISK_BLOCK
+        }
     }
 
     pub fn client(&self) -> Result<Client, Error> {
