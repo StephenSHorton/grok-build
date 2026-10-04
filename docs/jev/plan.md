@@ -4,7 +4,24 @@ Jev is a fast typed judge (choice / score / noul). On this fork it is **strictly
 
 Rock (`StephenSHorton/rock`) is a Go Jev-first clone. This plan **matches Rock’s wire and `ask_jev` contract** and **does not** copy Rock’s process model. Rock refuses to start without a key (or runs an offline policy that is “not Jev”). We never do that.
 
-Read with [`harness-map.md`](harness-map.md).
+Read with [`harness-map.md`](harness-map.md). User-facing setup: [`README.md`](README.md).
+
+---
+
+## What shipped (2026-10-04)
+
+All planned slices landed on this fork’s `main`. Feature flags stay **off** even when a key is present. No key ⇒ no tool, no HTTP, no errors.
+
+| Slice | PR | What actually shipped |
+|---|---|---|
+| (a) config + `jev_enabled()` | [#5](https://github.com/StephenSHorton/grok-build/pull/5) | `JevConfig` on typed `Config`. Precedence `JEV_API_KEY` → `TYPESAFE_API_KEY` → `[jev].api_key`. `[jev]` is not on `OVERLAY_ALLOW_PATHS`. No `grok inspect` line (would change no-key output). |
+| (b) client | [#6](https://github.com/StephenSHorton/grok-build/pull/6) | Isolated `xai-grok-jev` crate: `EndpointFor`, 30s timeout, 1 MiB cap. Empty key is an error at `Decide`; no HTTP. No gates, no offline policy. |
+| (c) `ask_jev` | [#8](https://github.com/StephenSHorton/grok-build/pull/8) | Tool registered only when settings are enabled. `ToolKind::Other`, `is_read_only()`, plan-mode allowed. Failed Decide is JSON `error`/`detail`, no fabricated `value`. `JEV_API_KEY` / `TYPESAFE_API_KEY` added to BYOK scrub. No extra system-prompt sentence. Default builder tool-name snapshot locked to the pre-`ask_jev` fixture. |
+| (d) nudge | [#9](https://github.com/StephenSHorton/grok-build/pull/9) | `JevNudgeReminder` always registered; emits only when `JevNudgeConfig` is in Resources (`key && nudge && nudge_every > 0`). Counts successful `search_replace`/`write`/`apply_patch`/bash-exit-0. **No extra Decide call.** No system-prompt sentence (keeps the no-key prompt identical). |
+| (e) safety check | [#10](https://github.com/StephenSHorton/grok-build/pull/10) | After permission allow (plan-mode already not deny), optional noul “is this destructive?” for bash / edit (including write) / MCP / `apply_patch`. Deny only on **live** noul ≥ `risk_block` (default 0.72) when `allow_destructive` is false. Jev faults always **allow**. No hard-coded Rock `Gates.Risk`, no offline deny. |
+| (f) context filter | [#11](https://github.com/StephenSHorton/grok-build/pull/11) | **Smaller safe version.** `prune_conversation` stays sync and HTTP-free (`xai-chat-state` has no Jev client). After `build_request`, if `context_filter` is on, the same older tool results prune considers (skip last 3 user turns) may be replaced on the **request clone** with `[Tool result omitted — not relevant]`. Drop only on live keep=false (noul &lt; 0.55). Errors keep the item. Query/snippet clipped to 400/800 chars. At most 4 Decide calls per request. Compaction input and grep `KeepSnippet` were **not** hooked (follow-up **f2**). |
+
+`docs/jev/README.md` is the short user-facing guide (key, `[jev]` fields, flags).
 
 Sources used (2026-10-04):
 
