@@ -111,6 +111,7 @@ pub fn canonical_input(input: &ToolInput) -> Option<serde_json::Value> {
         | ToolInput::EnterPlanMode(_)
         | ToolInput::ExitPlanMode(_)
         | ToolInput::AskUserQuestion(_)
+        | ToolInput::AskJev(_)
         | ToolInput::SendSubagentMessage(_)
         | ToolInput::SendFeedback(_)
         | ToolInput::Lsp(_)

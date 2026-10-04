@@ -13649,6 +13649,7 @@ dependencies = [
  "tracing",
  "xai-dirs",
  "xai-grok-config",
+ "xai-grok-env",
  "xai-grok-hooks",
  "xai-grok-permission-rules",
  "xai-grok-sampling-types",
@@ -13984,6 +13985,18 @@ dependencies = [
  "image",
  "thiserror 2.0.18",
  "xai-test-utils",
+]
+
+[[package]]
+name = "xai-grok-jev"
+version = "0.1.0"
+dependencies = [
+ "reqwest 0.12.24",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "wiremock",
 ]
 
 [[package]]
@@ -15134,6 +15147,7 @@ dependencies = [
  "xai-grok-extra-ca",
  "xai-grok-feedback",
  "xai-grok-image",
+ "xai-grok-jev",
  "xai-grok-otel",
  "xai-grok-permission-rules",
  "xai-grok-sandbox",

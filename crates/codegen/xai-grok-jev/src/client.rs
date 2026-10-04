@@ -35,6 +35,44 @@ pub enum Error {
     Decode(#[from] serde_json::Error),
 }
 
+/// Settings used to construct a [`Client`]. Empty / whitespace keys are disabled.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Settings {
+    pub api_key: String,
+    pub base_url: Option<String>,
+    pub model: Option<String>,
+}
+
+impl Settings {
+    /// `None` when `api_key` is empty or whitespace.
+    pub fn from_resolved(
+        api_key: impl Into<String>,
+        base_url: Option<String>,
+        model: Option<String>,
+    ) -> Option<Self> {
+        let api_key = api_key.into();
+        if api_key.trim().is_empty() {
+            return None;
+        }
+        Some(Self {
+            api_key,
+            base_url: base_url.filter(|url| !url.trim().is_empty()),
+            model: model.filter(|model| !model.trim().is_empty()),
+        })
+    }
+
+    pub fn is_enabled(&self) -> bool {
+        !self.api_key.trim().is_empty()
+    }
+
+    pub fn client(&self) -> Result<Client, Error> {
+        let mut client = Client::new(self.api_key.clone())?;
+        client.base_url = self.base_url.clone();
+        client.model = self.model.clone();
+        Ok(client)
+    }
+}
+
 /// Decide client. Empty key is an error at [`Client::decide`]; no HTTP is sent.
 #[derive(Debug, Clone)]
 pub struct Client {

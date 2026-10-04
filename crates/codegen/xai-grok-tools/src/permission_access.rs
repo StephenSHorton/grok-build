@@ -31,6 +31,7 @@ impl From<&crate::types::ToolInput> for AccessKind {
             | ToolInput::EnterPlanMode(_)
             | ToolInput::ExitPlanMode(_)
             | ToolInput::AskUserQuestion(_)
+            | ToolInput::AskJev(_)
             | ToolInput::UpdateGoal(_) => AccessKind::Read(None),
             ToolInput::Task(_) => AccessKind::Tool("task".to_owned()),
             ToolInput::SchedulerCreate(_) => AccessKind::Tool("scheduler_create".to_owned()),
@@ -165,6 +166,25 @@ mod tests {
         };
         assert_eq!(subagent_id, "sub-1");
         assert!(!subagent_id.contains(text));
+    }
+    #[test]
+    fn ask_jev_maps_to_read_access() {
+        use crate::implementations::grok_build::ask_jev::{AskJevInput, AskJevQuestion};
+        use crate::types::ToolInput;
+        let input = ToolInput::AskJev(AskJevInput {
+            state: serde_json::json!({"k": 1}),
+            questions: vec![AskJevQuestion {
+                name: "ok".into(),
+                question: "yes?".into(),
+                mode: "boolean".into(),
+                options: None,
+                levels: None,
+            }],
+        });
+        assert!(
+            matches!(AccessKind::from(&input), AccessKind::Read(None)),
+            "ask_jev is read-only and plan-mode allowed"
+        );
     }
     #[test]
     fn send_feedback_maps_to_tool_access() {

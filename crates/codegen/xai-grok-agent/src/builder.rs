@@ -63,6 +63,7 @@ pub struct AgentBuilder {
     /// When true, web search and X search go to the agentic sampler as native server-side tools instead of registering as local Function tools.
     backend_search: bool,
     web_fetch_config: xai_grok_tools::implementations::grok_build::web_fetch::WebFetchConfig,
+    jev_settings: Option<xai_grok_tools::implementations::grok_build::JevSettings>,
     lsp: Option<std::sync::Arc<dyn xai_grok_tools::implementations::lsp::LspBackend>>,
     image_gen_config: xai_grok_tools::implementations::grok_build::image_gen::ImageGenConfig,
     video_gen_config: xai_grok_tools::implementations::grok_build::video_gen::VideoGenConfig,
@@ -320,6 +321,7 @@ impl AgentBuilder {
             web_search_config: Default::default(),
             backend_search: false,
             web_fetch_config: Default::default(),
+            jev_settings: None,
             lsp: None,
             image_gen_config: Default::default(),
             video_gen_config: Default::default(),
@@ -524,6 +526,14 @@ impl AgentBuilder {
     /// Per-model gating is applied at request time, not here.
     pub fn with_backend_search(mut self, enabled: bool) -> Self {
         self.backend_search = enabled;
+        self
+    }
+    /// When `Some` and the key is non-empty, `ask_jev` is injected. Default `None` keeps the no-key path.
+    pub fn with_jev_settings(
+        mut self,
+        settings: Option<xai_grok_tools::implementations::grok_build::JevSettings>,
+    ) -> Self {
+        self.jev_settings = settings;
         self
     }
     /// `Disabled` (default) does not register the tool; flagged via remote `web_fetch_enabled` and the `GROK_WEB_FETCH` env.
@@ -797,6 +807,14 @@ impl AgentBuilder {
             if self.web_fetch_config.is_enabled() {
                 use xai_grok_tools::implementations::grok_build;
                 tool_config.tools.push((&grok_build::WebFetchTool).into());
+            }
+            if self
+                .jev_settings
+                .as_ref()
+                .is_some_and(|settings| settings.is_enabled())
+            {
+                use xai_grok_tools::implementations::grok_build;
+                tool_config.tools.push((&grok_build::AskJevTool).into());
             }
             if self.lsp.is_some() {
                 tool_config
@@ -1187,6 +1205,12 @@ impl AgentBuilder {
         drop(tool_registry_timer);
         if let Some(access) = self.memory_v2_access.clone() {
             tool_bridge.update_resource(access).await;
+        }
+        if let Some(settings) = self.jev_settings.as_ref().filter(|s| s.is_enabled()) {
+            match settings.client() {
+                Ok(client) => tool_bridge.update_resource(client).await,
+                Err(err) => tracing::warn!("failed to construct Jev client: {err}"),
+            }
         }
         if let Some(bytes) = self.mcp_max_output_bytes {
             tool_bridge.toolset().resources.lock().await.insert(
@@ -3253,6 +3277,168 @@ mod tests {
                     options: Some(x_search),
                 }),
             "definition tool_overrides must be applied to HostedTool options"
+        );
+    }
+
+    /// Default `AgentBuilder` tool names with Jev env cleared, captured before `ask_jev`.
+    /// Default builder does not read process env; the clear is the no-key checklist.
+    const PRE_JEV_ASK_DEFAULT_TOOL_NAMES: &[&str] = &[
+        "ask_user_question",
+        "enter_plan_mode",
+        "exit_plan_mode",
+        "get_command_or_subagent_output",
+        "grep",
+        "kill_command_or_subagent",
+        "list_dir",
+        "monitor",
+        "read_file",
+        "run_terminal_command",
+        "scheduler_create",
+        "scheduler_delete",
+        "scheduler_list",
+        "search_replace",
+        "search_tool",
+        "send_feedback",
+        "sessions_claim",
+        "sessions_close",
+        "sessions_list",
+        "sessions_open",
+        "sessions_release",
+        "sessions_send",
+        "todo_write",
+        "update_goal",
+        "use_tool",
+        "wait_commands_or_subagents",
+        "write",
+    ];
+
+    async fn default_builder_tool_names() -> Vec<String> {
+        use xai_grok_tools::computer::local::LocalTerminalBackend;
+        use xai_grok_tools::notification::ToolNotificationHandle;
+        let agent = AgentBuilder::new(
+            std::env::temp_dir(),
+            Arc::new(LocalTerminalBackend::new()),
+            ToolNotificationHandle::noop(),
+        )
+        .from_definition(crate::config::AgentDefinition::default_grok_build())
+        .build()
+        .await
+        .expect("default grok-build agent");
+        let mut names: Vec<String> = agent
+            .tool_definitions()
+            .await
+            .iter()
+            .map(|d| d.function.name.clone())
+            .collect();
+        names.sort();
+        names
+    }
+
+    fn jev_settings_for_tests() -> xai_grok_tools::implementations::grok_build::JevSettings {
+        xai_grok_tools::implementations::grok_build::JevSettings::from_resolved(
+            "test-jev-key",
+            None,
+            None,
+        )
+        .expect("test key")
+    }
+
+    #[tokio::test]
+    async fn default_builder_with_jev_env_cleared_matches_pre_change_tool_names() {
+        let _env = xai_grok_env::EnvVarGuard::remove("JEV_API_KEY").and_remove("TYPESAFE_API_KEY");
+        let names = default_builder_tool_names().await;
+        assert!(
+            !names.iter().any(|n| n == "ask_jev"),
+            "no-key path must not register ask_jev: {names:?}"
+        );
+        let expected: Vec<String> = {
+            let mut v: Vec<String> = PRE_JEV_ASK_DEFAULT_TOOL_NAMES
+                .iter()
+                .map(|s| (*s).to_owned())
+                .collect();
+            v.sort();
+            v
+        };
+        assert_eq!(
+            names, expected,
+            "default builder tool names drifted from the pre-ask_jev fixture"
+        );
+    }
+
+    #[tokio::test]
+    async fn ask_jev_is_registered_only_when_settings_enabled() {
+        use xai_grok_tools::computer::local::LocalTerminalBackend;
+        use xai_grok_tools::notification::ToolNotificationHandle;
+        let enabled = AgentBuilder::new(
+            std::env::temp_dir(),
+            Arc::new(LocalTerminalBackend::new()),
+            ToolNotificationHandle::noop(),
+        )
+        .from_definition(crate::config::AgentDefinition::default_grok_build())
+        .with_jev_settings(Some(jev_settings_for_tests()))
+        .build()
+        .await
+        .expect("enabled");
+        let names: Vec<String> = enabled
+            .tool_definitions()
+            .await
+            .iter()
+            .map(|d| d.function.name.clone())
+            .collect();
+        assert!(
+            names.contains(&"ask_jev".to_string()),
+            "ask_jev must be listed when settings are enabled: {names:?}"
+        );
+
+        let denied = AgentBuilder::new(
+            std::env::temp_dir(),
+            Arc::new(LocalTerminalBackend::new()),
+            ToolNotificationHandle::noop(),
+        )
+        .from_definition({
+            let mut def = crate::config::AgentDefinition::default_grok_build();
+            def.disallowed_tools = vec!["ask_jev".into()];
+            def
+        })
+        .with_jev_settings(Some(jev_settings_for_tests()))
+        .build()
+        .await
+        .expect("disallowed");
+        let denied_names: Vec<String> = denied
+            .tool_definitions()
+            .await
+            .iter()
+            .map(|d| d.function.name.clone())
+            .collect();
+        assert!(
+            !denied_names.contains(&"ask_jev".to_string()),
+            "disallowed_tools must still strip ask_jev: {denied_names:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn ask_jev_is_listed_on_plan_profile_when_enabled() {
+        use xai_grok_tools::computer::local::LocalTerminalBackend;
+        use xai_grok_tools::notification::ToolNotificationHandle;
+        let agent = AgentBuilder::new(
+            std::env::temp_dir(),
+            Arc::new(LocalTerminalBackend::new()),
+            ToolNotificationHandle::noop(),
+        )
+        .from_definition(crate::config::AgentDefinition::grok_build_plan())
+        .with_jev_settings(Some(jev_settings_for_tests()))
+        .build()
+        .await
+        .expect("plan profile");
+        let names: Vec<String> = agent
+            .tool_definitions()
+            .await
+            .iter()
+            .map(|d| d.function.name.clone())
+            .collect();
+        assert!(
+            names.contains(&"ask_jev".to_string()),
+            "plan mode must still list ask_jev when enabled: {names:?}"
         );
     }
 }

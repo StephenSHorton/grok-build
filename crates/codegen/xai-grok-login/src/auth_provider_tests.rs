@@ -746,6 +746,8 @@ async fn provider_helper_env_scrubs_first_party_credentials() {
         "GROK_DEPLOYMENT_KEY",
         "GROK_CODE_XAI_API_KEY",
         "GROK_EXTRA_AUTH_KEY",
+        "JEV_API_KEY",
+        "TYPESAFE_API_KEY",
         "GROK_TRACE_UPLOAD_CREDENTIALS_FILE",
         "OTEL_EXPORTER_OTLP_HEADERS",
         "GROK_INTERNAL_OTLP_HEADERS",

@@ -2572,6 +2572,13 @@ impl SessionActor {
                 };
                 (title, acp::ToolKind::Other, vec![], vec![])
             }
+            ToolInput::AskJev(ref ask) => {
+                let title = match ask.questions.as_slice() {
+                    [q] => format!("Jev: {}", q.name),
+                    qs => format!("Jev: {} questions", qs.len()),
+                };
+                (title, acp::ToolKind::Other, vec![], vec![])
+            }
             ToolInput::SendSubagentMessage(message) => {
                 let (title, kind) = active_agent_message_tool_call_display(&message);
                 (title, kind, vec![], vec![])

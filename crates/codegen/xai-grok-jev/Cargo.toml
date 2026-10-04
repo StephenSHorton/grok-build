@@ -3,7 +3,7 @@ license = "Apache-2.0"
 name = "xai-grok-jev"
 version = "0.1.0"
 edition.workspace = true
-description = "Optional Jev / TypeSafe decide client. Not constructed on the grok hot path until ask_jev lands."
+description = "Optional Jev / TypeSafe decide client and ask_jev mapping."
 
 [dependencies]
 reqwest = { workspace = true, default-features = false, features = ["json", "rustls-tls"] }

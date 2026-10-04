@@ -41,6 +41,7 @@ default-bazel = []
 tempfile = { workspace = true }
 serde_json = { workspace = true }
 serial_test = { workspace = true }
+xai-grok-env = { workspace = true, features = ["test-support"] }
 
 [lints]
 workspace = true
