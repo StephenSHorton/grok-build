@@ -24,7 +24,7 @@ impl SessionActor {
         let Some(settings) = self
             .rebuild_spec
             .jev_settings
-            .as_ref()
+            .get()
             .filter(|settings| settings.context_filter_active())
         else {
             return;
@@ -50,7 +50,7 @@ impl SessionActor {
             }
             calls += 1;
             let keep = xai_grok_tools::implementations::grok_build::maybe_keep_snippet(
-                Some(settings),
+                Some(&settings),
                 client.as_ref(),
                 &query,
                 snippet,

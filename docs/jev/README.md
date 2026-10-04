@@ -4,7 +4,19 @@ Jev is a typed judge (boolean / choice / score), not an LLM. On this fork it is 
 
 No key ⇒ no tool, no HTTP, no errors. Behavior matches this fork without Jev.
 
-## Set the key
+## `/jev-setup`
+
+Enable Jev from the TUI (or ACP/headless) without editing the file by hand.
+
+1. `/jev-setup` shows on/off, key source (env vs file), a **masked** key, and flag states. The full key is never printed or logged.
+2. `/jev-setup set` opens a masked prompt in the TUI. Do not paste the key on the slash line (it can land in scrollback). ACP/headless: `/jev-setup set [--force] <key>` (never echoed).
+3. A tiny live Decide ping (`Is 1 less than 2?`) validates the key. Failures are shown; nothing is saved unless you re-run with `--force`.
+4. The key is written to `[jev].api_key` in `~/.grok/config.toml` (or `$GROK_HOME`) with comments and sibling tables preserved.
+5. Then toggle extras: `/jev-setup nudge on|off`, `safety on|off`, `filter on|off` (one-line explanations in the status text).
+6. `/jev-setup off` removes the file key. If `JEV_API_KEY` / `TYPESAFE_API_KEY` is set, the UI says so — env still wins, so Jev stays on until you unset the env var.
+7. If the session is idle, Jev turns on immediately (`ask_jev` registered, `<jev>` prompt section added). If a turn is running, run `/jev-setup apply` when idle or start a new session.
+
+## Set the key (manual)
 
 First non-empty wins:
 
@@ -12,7 +24,7 @@ First non-empty wins:
 2. Environment `TYPESAFE_API_KEY`
 3. File `[jev].api_key` in `~/.grok/config.toml` (or `$GROK_HOME/config.toml`)
 
-Empty / whitespace values do not count. `GROK_CONFIG` overlays cannot inject a key (`[jev]` is not overlay-allowlisted). Prefer env for secrets.
+Empty / whitespace values do not count. `GROK_CONFIG` overlays cannot inject a key (`[jev]` is not overlay-allowlisted). Prefer env for secrets. `/jev-setup` writes the file layer only.
 
 Hosted keys starting with `jv_live_` call `https://jevtypesafeai.com/api/v1/decide`. Every other key (including official TypeSafe keys) calls `https://api.typesafe.ai/v1/systemone`. Optional `[jev].base_url` overrides that prefix rule. Default model is `jev-latest`; override with `[jev].model`.
 
@@ -53,6 +65,10 @@ One tool call is one Decide request (batched named questions). Modes: `boolean` 
 A failed call is an observation: `error` is set, each answer has `detail` `Jev call failed, question not answered` or `Jev returned no answer`, and **no fabricated `value`**. The turn continues.
 
 Read-only and allowed in plan mode. `disallowed_tools = ["ask_jev"]` still hides it when enabled.
+
+## What the model sees
+
+Only when a key is present, the system prompt gets a short `<jev>` section: what `ask_jev` is, when to use boolean vs choice vs score, batch named questions, put facts in `state` (Jev cannot read files), treat failures as observations (never invent answers), and which extras are on. No key ⇒ that section is absent and the prompt is byte-identical to the no-Jev snapshot.
 
 ## Related
 

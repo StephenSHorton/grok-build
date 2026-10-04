@@ -18,6 +18,7 @@ pub(crate) mod external_editor;
 mod import_claude;
 mod inline_feedback;
 mod interject;
+mod jev_setup;
 mod jump;
 mod modes;
 pub(crate) mod notes;

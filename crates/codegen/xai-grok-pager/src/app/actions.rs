@@ -714,6 +714,14 @@ pub enum Action {
     },
     /// Enter remember mode (visual prompt change, not a send).
     EnterRememberMode,
+    /// Enter the masked `/jev-setup set` prompt. The key is never on this Action.
+    EnterJevKeyMode {
+        force: bool,
+    },
+    /// Submit the key stashed on the agent view (never on this Action).
+    SubmitJevKey {
+        force: bool,
+    },
     /// Send a remember note from # mode.
     /// Routes through LLM rewrite when a session is active; falls back to direct save otherwise.
     SendRememberNote(String),
@@ -1683,6 +1691,13 @@ pub enum Effect {
     PersistFeatureOverride {
         feature: xai_grok_shell::agent::config::Feature,
         saved: Option<bool>,
+    },
+    /// Validate a Jev key with a tiny Decide ping, then write `[jev].api_key`.
+    /// `key` Debugs as a mask. Never log the raw value.
+    JevSetupValidateAndSave {
+        agent_id: AgentId,
+        key: xai_grok_shell::util::config::JevKeyArg,
+        force: bool,
     },
     /// Toggle mouse reporting off and on to unwedge xterm.js's button tracker
     /// (see `AgentView::reset_wedged_mouse_reporting`). An effect so it rides the escape
@@ -3232,6 +3247,12 @@ pub enum TaskResult {
     FeatureOverridePersisted {
         feature: xai_grok_shell::agent::config::Feature,
         result: Result<Option<bool>, String>,
+    },
+    /// `/jev-setup set` finished validate+save. `apply` queues `/jev-setup apply`.
+    JevSetupComplete {
+        agent_id: AgentId,
+        message: String,
+        apply: bool,
     },
     /// Off-thread clipboard attachment probe finished (see [`Effect::ProbeClipboardAttachment`]); dispatch attaches the chip.
     ClipboardAttachmentProbed {

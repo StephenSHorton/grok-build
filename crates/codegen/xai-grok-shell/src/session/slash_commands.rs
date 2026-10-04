@@ -240,6 +240,16 @@ pub(super) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         resolve: |_args| BuiltinAction::SessionInfo,
     },
     BuiltinCommand {
+        name: "jev-setup",
+        description: "Enable Jev, set or remove the key, and toggle optional extras",
+        argument_hint: Some("status | set [--force] [key] | off | nudge on|off | safety on|off | filter on|off | apply"),
+        aliases: &[],
+        model_authored_eligibility: ModelAuthoredEligibility::Denied,
+        gate: BuiltinGate::AlwaysOn,
+        workflow_projection: WorkflowProjection::None,
+        resolve: |args| BuiltinAction::JevSetup(crate::util::config::parse_args(args)),
+    },
+    BuiltinCommand {
         name: "feedback",
         description: "Send feedback about the current session",
         argument_hint: Some("feedback text"),
@@ -485,6 +495,7 @@ pub const PAGER_COMMAND_KEYS: &[&str] = &[
     "imagine-video",
     "import-claude",
     "jump",
+    "jev-setup",
     "login",
     "logout",
     "log",
@@ -1262,6 +1273,7 @@ pub(super) enum BuiltinAction {
         name: String,
         input: String,
     },
+    JevSetup(Result<crate::util::config::JevSetupRequest, String>),
 }
 impl BuiltinAction {
     pub(crate) fn command_name(&self) -> &'static str {
@@ -1295,6 +1307,7 @@ impl BuiltinAction {
             BuiltinAction::DeepResearch { .. } => "deep-research",
             BuiltinAction::WorkflowManage { .. } => "workflow",
             BuiltinAction::WorkflowLaunch { .. } => "workflow",
+            BuiltinAction::JevSetup(_) => "jev-setup",
         }
     }
     pub(crate) fn args_provided(&self) -> bool {
@@ -1328,6 +1341,11 @@ impl BuiltinAction {
             BuiltinAction::DeepResearch { .. } => true,
             BuiltinAction::WorkflowManage { .. } => true,
             BuiltinAction::WorkflowLaunch { input, .. } => !input.is_empty(),
+            BuiltinAction::JevSetup(request) => !matches!(
+                request,
+                Ok(crate::util::config::JevSetupRequest::Status)
+                    | Ok(crate::util::config::JevSetupRequest::Help)
+            ),
         }
     }
 }

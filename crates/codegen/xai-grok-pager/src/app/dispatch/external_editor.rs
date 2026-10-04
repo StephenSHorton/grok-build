@@ -20,6 +20,10 @@ pub(super) fn dispatch_edit_prompt_external(app: &mut AppView) -> Vec<Effect> {
         report_prompt_failure(app, agent_id, VOICE_MESSAGE);
         return vec![];
     }
+    if agent.prompt_input_mode.is_secret() {
+        report_prompt_failure(app, agent_id, "Can't open the editor while entering a Jev API key.");
+        return vec![];
+    }
     match access {
         ExternalPromptEditorAccess::OwnedElsewhere => return vec![],
         ExternalPromptEditorAccess::PastePending => {

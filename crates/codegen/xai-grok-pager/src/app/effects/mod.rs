@@ -2308,6 +2308,53 @@ pub(crate) fn execute(
                     }
                 });
         }
+        Effect::JevSetupValidateAndSave { agent_id, key, force } => {
+            tasks.spawn(async move {
+                let key = key.0;
+                match xai_grok_shell::util::config::validate_key(&key).await {
+                    Ok(()) => {}
+                    Err(err) if force => {
+                        if let Err(save_err) =
+                            xai_grok_shell::util::config::save_user_api_key(&key).await
+                        {
+                            return TaskResult::JevSetupComplete {
+                                agent_id,
+                                message: save_err,
+                                apply: false,
+                            };
+                        }
+                        return TaskResult::JevSetupComplete {
+                            agent_id,
+                            message: format!(
+                                "Saved [jev].api_key even though validation failed:\n{err}"
+                            ),
+                            apply: true,
+                        };
+                    }
+                    Err(err) => {
+                        return TaskResult::JevSetupComplete {
+                            agent_id,
+                            message: format!(
+                                "{err}\nNot saved. Re-run /jev-setup set --force if you want to store this key anyway."
+                            ),
+                            apply: false,
+                        };
+                    }
+                }
+                match xai_grok_shell::util::config::save_user_api_key(&key).await {
+                    Ok(()) => TaskResult::JevSetupComplete {
+                        agent_id,
+                        message: "Saved [jev].api_key (masked in status).".to_string(),
+                        apply: true,
+                    },
+                    Err(err) => TaskResult::JevSetupComplete {
+                        agent_id,
+                        message: err,
+                        apply: false,
+                    },
+                }
+            });
+        }
         Effect::Authenticate {
             request_seq,
             method_id,

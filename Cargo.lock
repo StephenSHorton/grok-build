@@ -14838,6 +14838,7 @@ dependencies = [
  "xai-grok-foreign-sessions",
  "xai-grok-hooks",
  "xai-grok-http",
+ "xai-grok-jev",
  "xai-grok-login",
  "xai-grok-mcp",
  "xai-grok-memory",

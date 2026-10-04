@@ -62,6 +62,9 @@ impl AgentView {
 
     /// Move the composer into the single stash slot. The composer stays in its current `!`/`#` mode; only the chord resets that.
     pub(in crate::app) fn stash_prompt_draft(&mut self, cause: StashCause) {
+        if self.prompt_input_mode.is_secret() {
+            return;
+        }
         if self.prompt.text().is_empty() && self.prompt.images.is_empty() {
             return;
         }
