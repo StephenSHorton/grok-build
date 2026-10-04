@@ -23,7 +23,7 @@ Highest leverage, in order:
 1. **Agent-callable `ask_jev`** — boolean / choice / score in the moment. Self-validation after a fix, error triage, “which of these files matters?” The model decides when to call. This is the product.
 2. **Optional self-validation nudge** — after a successful edit/write or allowed shell, a short reminder that the agent *may* call `ask_jev`. Text only; does not call Jev itself. Matches Rock slice (b).
 3. **Optional permission-layer safety check** — noul “is this destructive?” after the existing decision is not deny. Fail-open. **Not** Rock’s hard `Gates.Risk` (Rock keeps that hard-coded and yolo does not bypass it). We will not add an always-on block.
-4. **Optional context filter** — at compaction input selection (and later, maybe grep hits). Fail-open: errors keep the snippet. There is no `KeepSnippet` today.
+4. **Optional context filter** — first at per-turn `prune_conversation` (what the next `Complete` sees), then compaction input, later maybe grep hits. Fail-open: errors keep the snippet. There is no `KeepSnippet` today.
 
 Out of scope for this effort unless a later slice explicitly takes it: Rock’s every-turn `BeforeTurn` (model/skill/stuck/compact), `SubagentKind`, `PlanReady`, process fail-fast, TUI diamonds as a 1.0 requirement. A later TUI mark for `ask_jev` can follow the tool.
 
@@ -162,7 +162,8 @@ Each slice is independently mergeable. Every slice keeps the no-key path identic
 **Files (expected).**
 
 - `crates/codegen/xai-grok-config-types/src/jev.rs` (new) + re-export from `lib.rs` — `JevConfig { api_key, base_url, model, nudge, nudge_every, safety_check, context_filter, … }`
-- `crates/codegen/xai-grok-config/src/` — deserialize `[jev]` from effective config; **do not** allowlist `api_key` on `GROK_CONFIG`
+- `crates/codegen/xai-grok-shell/src/agent/config.rs` — field on typed `Config` (`Config::new_from_toml_cfg`); optional `BoolFlag` for feature gates
+- `crates/codegen/xai-grok-config/src/` — deserialize `[jev]` from effective config; **do not** add `jev` to `OVERLAY_ALLOW_PATHS`
 - `crates/codegen/xai-grok-jev/src/config.rs` (new crate) or a small module in shell — `jev_key()`, `jev_enabled()`, `JevSettings::from_env_and_file`
 - Optional: `grok inspect` line `jev: off` only when we can add it without changing inspect output on the no-key path (prefer skip inspect until a later slice if output would change)
 
@@ -258,7 +259,7 @@ Rock keeps `Gates.Risk` hard-coded. **We do not.** This slice is off by default.
 **Files.**
 
 - `xai-grok-jev` thin `risk_question` helper (same encoder as `ask`)
-- `crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs` after permission allow, before `dispatch_observed`
+- `crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs` after permission allow, before `dispatch_observed` (preferred). Alternate: after `GatePreflight::evaluate` in `xai-grok-workspace` `permission/manager/mod.rs` if the check must see the same actor pipeline as yolo/grants.
 - config: `safety_check`, `risk_block`, `allow_destructive`
 
 **Tests.**
@@ -272,23 +273,24 @@ Rock keeps `Gates.Risk` hard-coded. **We do not.** This slice is off by default.
 
 ### (f) Optional context filtering (fail-open)
 
-**What.** If `jev_enabled() && context_filter`, before compaction builds its payload, optionally noul older tool results / large clips (“does this still help?”). Drop only on live keep=false above `min_confidence`. Errors keep the item. Clip state to stay well under Jev’s ~64k combined / ~32k per-question budget.
+**What.** If `jev_enabled() && context_filter`, optionally noul older tool results / large clips (“does this still help?”). Drop only on live keep=false above `min_confidence`. Errors keep the item. Clip state to stay well under Jev’s ~64k combined / ~32k per-question budget.
 
-A grep `KeepSnippet` analog can be a follow-up inside this slice or a tiny (f2) if the compaction hook is enough for one PR.
+Prefer the **per-turn prune path** first (`ChatStateActor::build_conversation_request` / `prune_conversation` in `xai-chat-state` `request_builder.rs`): that is what the next completion sees, including the 50%-window soft-trim. Compaction (`run_compact_inner`) reuses the same prune via `apply_turn_request_pruning`; hook `PreCompact` if you only need an observe point. A grep `KeepSnippet` analog can be a follow-up (f2) if the prune hook stays small.
 
 **Files.**
 
-- `xai-grok-shell/src/session/compaction.rs` and/or `helpers/prepared_compaction_history.rs`
+- `crates/codegen/xai-chat-state/src/actor/request_builder.rs` (`prune_conversation` / post-prune)
+- `xai-grok-shell/src/session/compaction.rs` if the compact ladder needs the same filter on verbatim input
 - optional `GrepTool` match filter (`xai-grok-tools` grep impl) — only if it stays small
 
 **Tests.**
 
-- flag off: compaction input identical
-- flag on + keep=false: item omitted from compact payload, still in session log
-- flag on + error: item kept
-- no key: no HTTP, compact tests unchanged
+- flag off: `build_request` / compact payload identical
+- flag on + keep=false: older tool result omitted from the next request (still in session log)
+- flag on + error: item kept (today’s prune)
+- no key: no HTTP, chat-state prune and compact tests unchanged
 
-**No-key verify.** Existing compaction unit tests (`session_compact_*`, `xai-grok-compaction`) green with Jev env unset.
+**No-key verify.** Existing `xai-chat-state` prune tests and compaction unit tests (`session_compact_*`, `xai-grok-compaction`) green with Jev env unset.
 
 ---
 
@@ -332,7 +334,7 @@ Still open for later slices (not blockers for (a)–(c)):
 
 - Exact `ToolKind` for `ask_jev` (`Other` vs a new variant). `Other` is enough for (c); a new kind is only needed if prompt templates should say `${{ tools.by_kind.ask_jev }}`.
 - Whether `grok inspect` should print `jev: off` in (a) (changes inspect text) or wait until a user-facing slice.
-- Compaction vs grep as the first (f) insertion — recommend compaction payload first; grep if a PR stays small.
+- First (f) insertion: per-turn `prune_conversation` (recommended) vs compact ladder vs grep `KeepSnippet`. Prune is what the next `Complete` sees; grep if a PR stays small.
 - TUI `◇ jev` marks: Rock slice (d). Not required for optional-tool usefulness; add only if the pager has a cheap tool-row summary.
 - New crate name `xai-grok-jev` vs a module under `xai-grok-tools`. Prefer a **separate crate** so the tools crate does not grow an HTTP client, and so the shell can depend on config+client without registering the tool.
 

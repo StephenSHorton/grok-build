@@ -43,7 +43,7 @@ Out-of-tree packs can call `register_tool_pack` (`xai-grok-tools` registry) or `
 
 ### Schema exposure
 
-`Agent::tool_definitions()` → `ToolBridge::tool_definitions()` → `FinalizedToolset::tool_definitions()` returns `Vec<ToolDefinition>`. Those go on the sampling request as `tools[]` (`xai-grok-sampling-types` `ToolSpec` / `ToolDefinition`). Hosted backend-search tools are a separate `HostedTool` list, not `ToolSpec`s.
+`Agent::tool_definitions()` → `ToolBridge::tool_definitions()` → `FinalizedToolset::tool_definitions()` returns `Vec<ToolDefinition>`. Per-tool schemas are rendered at finalize via `ToolMetadata::versioned_definition`. The shell turn path converts them in `prepare_tool_definitions_inner` / `turn_base_tool_specs` (`sampler_turn.rs`) to `ToolSpec` (`From<ToolDefinition>`). Hosted backend-search tools are a separate `HostedTool` list, not `ToolSpec`s. A session copy is persisted as `{session}/tool_definitions.json` (`session/tool_definitions_artifact.rs`).
 
 MCP tools are discovered at runtime and either listed directly or reached through `search_tool` / `use_tool`.
 
@@ -60,9 +60,9 @@ Do **not** register `ask_jev` and then error at call time when no key is set. Th
 
 ### Dispatch
 
-`SessionActor::execute_tool_calls` (`crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs`) → `prepare_tool_call` (parse, PreToolUse, plan-mode, permission) → `dispatch_observed` (`tool_dispatch.rs`) → `WorkspaceOps::call_tool_with_context` → `ToolDispatch::call` / `call_terminal` (`crates/common/xai-tool-runtime/src/dispatch.rs`) → typed `Tool::execute` / `run`.
+`SessionActor::execute_tool_calls` (`crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs`) → `prepare_tool_call` (parse, PreToolUse, plan-mode, permission) → `dispatch_observed` (`tool_dispatch.rs`) → `WorkspaceOps::call_tool_with_context` → `FinalizedToolset::call_with_context` → `LocalRegistry` → typed `Tool::execute` / `run`.
 
-Results become `ConversationItem::tool_result` and are pushed onto chat state for the next completion.
+Results become `ConversationItem::tool_result` via `ChatStateHandle::push_tool_result`. The next inner-loop iteration calls `ChatStateHandle::build_request` and re-samples. That is the only re-entry path.
 
 Post-execution `Reminder`s (`xai-grok-tools` `types/tool.rs`) can append system-reminder text after a tool result. That is the closest existing hook to Rock’s self-validation nudge.
 
@@ -73,24 +73,27 @@ Post-execution `Reminder`s (`xai-grok-tools` `types/tool.rs`) can append system-
 ### Objects
 
 - `Agent` (`crates/codegen/xai-grok-agent/src/agent.rs`) — definition, rendered system prompt, `ToolBridge`, `CompactionPolicy`, `ReminderPolicy`. It does **not** run the turn loop.
-- `SessionActor` (`crates/codegen/xai-grok-shell/src/session/acp_session_impl/`) — the loop: sample → tool calls → feed results → sample again.
-- Turn body: `crates/codegen/xai-grok-shell/src/session/acp_session_impl/turn.rs`.
-- Subagents reuse the same actor/tool path; they inherit the parent’s PreToolUse hooks (`crates/codegen/xai-grok-shell/src/agent/subagent/mod.rs`).
-- Headless `-p`, TUI, and ACP (`grok agent stdio` / `serve`) all enter this session actor.
+- `MvpAgent` (`crates/codegen/xai-grok-shell/src/agent/mvp_agent/acp_agent.rs`) — ACP façade; `prompt` sends `SessionCommand::Prompt`.
+- `SessionActor` (`crates/codegen/xai-grok-shell/src/session/acp_session_impl/`) — the loop. Command loop: `run_loop.rs`. Turn task: `turn_task.rs` `run_task` → `handle_turn_input`.
+- Inner sample↔tool loop: `process_conversation_turn_inner` in `turn.rs`. Sampling: `run_turn_via_sampler` (`sampler_turn.rs`). Outcomes: `TurnOutcome` / `ToolLoop` in `types.rs`.
+- Subagents reuse the same actor (`agent/subagent/attempt_runner.rs` sends `SessionCommand::Prompt` on the child). They inherit the parent’s PreToolUse hooks.
+- Headless `-p`, TUI, stdio, and `serve` all enter `MvpAgent` → this session actor.
 
 ### Turn lifecycle
 
-1. User (or injected) message is appended to chat state.
-2. Optional preflight overflow check: `check_preflight_overflow` / `run_compact_only` if the estimated prompt is over the window.
-3. System prompt is the cached `Agent::system_prompt()` (re-rendered by `finalize_prompt` / `PromptContext::render` when tools or context change).
-4. Sampler streams a completion (`sampler_turn.rs`). Tool calls arrive as `ToolCall` / `ToolCallResponse`.
-5. Repeat / doom-loop detectors (`identical_tool_calls`, `NUDGE_AFTER_IDENTICAL_TOOL_CALLS = 8`, `MAX_CONSECUTIVE_IDENTICAL_PROBLEMATIC_TOOL_CALLS`) may nudge or stop. This is **not** Jev.
-6. Phase → `ToolExecution`. `execute_tool_calls` runs the batch (plan-exit tools are split to the tail).
-7. Each call: prepare → permission → dispatch → post-flight (reminders, skill announcements, deferred followups).
-8. Results are `push_tool_result`’d. `ToolLoop::Continue` loops back to another sample. `PermissionReject`, `Cancelled`, `FollowupMessage`, `HookDenied`, `MaxTurnsReached` stop or divert.
-9. `max_turns` (if set) stops after N tool rounds.
+Three nested loops: one user `Prompt` (`handle_turn_input_inner`), an outer continuation (goals / stop hooks / completion recovery), and the inner `process_conversation_turn_inner` sample↔tool loop.
 
-A new tool result re-enters the loop only as a conversation item. There is no side channel that bypasses the next `Complete`.
+1. `MvpAgent::prompt` → `SessionCommand::Prompt` → `queue_input` / `maybe_start_running_task` → `run_task` → `handle_turn_input`.
+2. User message is `push_user_message_and_ack`’d. Optional pre-sample compact: `check_auto_compact_needed`.
+3. System prompt is the cached `Agent::system_prompt()` (installed at session init; re-rendered by `finalize_prompt` / `PromptContext::render` when tools change). Per-request history is `ChatStateHandle::build_request`.
+4. `run_turn_via_sampler` → `submit_and_collect_with_metadata`. Live UI drains `SamplingEvent`s; the turn driver awaits the collected `ConversationResponse`. `record_response_items` commits assistant + tool-use items.
+5. Repeat / doom-loop detectors (`IdenticalToolCallRun`, nudge at 4 problematic / 8 default identical calls, hard stop at 8 / 12) may nudge or `TurnOutcome::StationarityEnded`. This is **not** Jev.
+6. If tool calls: phase `ToolExecution`, `execute_tool_calls` (plan-exit tools split to the tail).
+7. Each call: prepare → permission → dispatch → post-flight (reminders, skill announcements, deferred followups).
+8. `push_tool_result` → inner loop `continue` → `build_request` → next sample. `ToolLoop::PermissionReject` / `Cancelled` / `FollowupMessage` / `HookDenied` / `TurnOutcome::MaxTurnsReached` stop or divert.
+9. `max_turns` (if set) counts model↔tool cycles via `tool_turn_count`.
+
+A new tool result re-enters only as a conversation item. There is no side channel that bypasses the next `Complete`.
 
 ---
 
@@ -103,8 +106,8 @@ Order inside `SessionActor::prepare_tool_call` (`tool_calls.rs`), then dispatch:
 1. **Parse / existence.** Unknown MCP names and JSON parse failures become tool errors, not permission prompts.
 2. **`PreToolUse` hooks** (`apply_pre_tool_use_gate`). `HookEventName::PreToolUse` in `crates/codegen/xai-grok-hooks/src/event.rs`. Hooks can allow, deny, ask, rewrite args, or defer to the normal permission flow. Config, plugin, and ACP client hooks all feed this gate.
 3. **Plan-mode edit gate** (`plan_mode_edit_gate`). Mutating tools are rejected in plan mode except the plan file itself (`plan_file_auto_approve`).
-4. **Permission manager.** `AccessKind` + `PermissionRequest` → `PermissionHandle::request` → `Decision` (`crates/codegen/xai-grok-permission-rules/src/types.rs`): `Allow`, `Ask`, `FollowupMessage`, `Reject`, `PolicyDeny`, `Cancelled`.
-5. **Modes** (docs: `crates/codegen/xai-grok-pager/docs/user-guide/22-permissions-and-safety.md`): `ask` (default), `acceptEdits`, `auto`, `dontAsk`, `bypassPermissions` / always-approve (`--yolo`). Deny rules and hooks still apply under yolo.
+4. **Permission manager.** `AccessKind` + `PermissionRequest` → `PermissionHandle::request` (`crates/codegen/xai-grok-workspace/src/permission/manager/mod.rs`) → `Decision` (`xai-grok-permission-rules/src/types.rs`): `Allow`, `Ask`, `FollowupMessage`, `Reject`, `PolicyDeny`, `Cancelled`. Actor order: `GatePreflight::evaluate` → yolo short-circuit → session grants → auto-mode classifier → sandbox bash auto-allow → `CompiledPolicy` → user prompt. `HookDecision::Ask` sets `hook_ask` and still prompts under yolo.
+5. **Modes** (docs: `crates/codegen/xai-grok-pager/docs/user-guide/22-permissions-and-safety.md`): `ask` (default), `acceptEdits`, `auto`, `dontAsk`, `bypassPermissions` / always-approve (`--yolo`). Deny rules and hooks still apply under yolo. Hook **errors** already fail-open (`xai-grok-hooks` dispatcher).
 6. **Config rules.** `[permission]` `PermissionConfig` / `PermissionRule` (`crates/codegen/xai-grok-config-types/src/permission.rs`): `allow` / `ask` / `deny` with `ToolFilter` (`Any`, `Bash`, `Edit`, `Read`, `Grep`, `Mcp`, `WebFetch`, `AgentMessage`) and glob/domain patterns.
 7. **Sandbox.** OS-level seatbelt / Landlock (`xai-grok-sandbox`, `xai-grok-workspace` `permission/sandbox_gate.rs`). Independent of Jev.
 8. **`exec_risk` / bash splitting** (`xai-grok-permission-rules`). Built-in destructive-ish shell classification. Not a Jev call.
@@ -113,9 +116,9 @@ Order inside `SessionActor::prepare_tool_call` (`tool_calls.rs`), then dispatch:
 
 ### Hook points for an optional Jev safety check
 
-Best insertion: **after** the existing decision is not already deny, **before** dispatch — same moment Rock calls `Gates.Risk` (Rock: after allow/ask/deny, only if not already deny). In this tree that is the tail of `prepare_tool_call` once `Decision::Allow` (or auto-approved `Ask`) is known, still inside the `tool.decision` span.
+Best insertion: **after** the existing decision is not already deny, **before** dispatch — same moment Rock calls `Gates.Risk`. In this tree that is the tail of `prepare_tool_call` once `Decision::Allow` (or auto-approved `Ask`) is known, still inside the `tool.decision` span. Alternate: immediately after `GatePreflight::evaluate` in the permission actor, adding only an explicit deny/ask when live Jev is confident.
 
-Fail-open: timeout, HTTP error, or missing answer must not block the call. Only a live, decoded noul above a configured threshold (and only when the feature is on) may deny.
+Fail-open: timeout, HTTP error, or missing answer must not block the call (same pattern as PreToolUse hook errors). Only a live, decoded noul above a configured threshold (and only when the feature is on) may deny.
 
 Do **not** add a hard-coded Rock-style Risk gate that always runs. Yolo already does not skip deny rules; Jev must not become a second always-on block.
 
@@ -137,13 +140,14 @@ Typical sections:
 - User-message wrappers (`prompt/user_message.rs`).
 - Runtime `<system-reminder>` blocks (`system_reminder.rs`, tool `Reminder`s, identical-call nudges).
 
-The conversation itself is chat-state history (user / assistant / tool results), not the system prompt.
+The conversation itself is chat-state history (user / assistant / tool results), not the system prompt. Per-turn request assembly is `ChatStateHandle::build_request` → `ChatStateActor::build_conversation_request` (`crates/codegen/xai-chat-state/src/actor/request_builder.rs`): optional memory inject, image budget, then **tool-result pruning** if usage exceeds **50%** of the window (`PruningConfig`: keep last 3 user turns, soft-trim old tool bodies, hard-clear with `[Tool result omitted — too old]` after 10 turns).
 
 ### Compaction
 
-- Policy: `CompactionPolicy` (`crates/codegen/xai-grok-agent/src/compaction.rs`). Default auto-compact threshold **85%** of the model context window. Optional two-pass, optional memory flush, 300s wall-clock budget.
-- Trigger: `SessionActor::should_auto_compact` / `check_auto_compact_needed` / `run_compact_only` (`crates/codegen/xai-grok-shell/src/session/compaction.rs`). Also mid-turn `check_preflight_overflow` after tool rounds, and compact-on-context-overflow errors (`should_compact_on_error`).
-- Implementation helpers: `crates/codegen/xai-grok-shell/src/session/helpers/session_compact.rs`, `xai-chat-state` compaction utils, `crates/common/xai-grok-compaction`, `crates/codegen/xai-compaction-transcript`.
+- Policy: `CompactionPolicy` (`crates/codegen/xai-grok-agent/src/compaction.rs`). Default auto-compact threshold **85%** of the model context window. Optional two-pass, optional memory flush, 300s wall-clock budget. Threshold also via `GROK_AUTO_COMPACT_THRESHOLD_PERCENT` (`util/config/resolve/compaction.rs`).
+- Trigger: `SessionActor::should_auto_compact` / `check_auto_compact_needed` / `run_compact_inner` (`crates/codegen/xai-grok-shell/src/session/compaction.rs`). Also mid-turn `check_preflight_overflow` after tool rounds, compact-on-error (`should_compact_on_error`), and `maybe_compact_on_model_switch`.
+- Engine: `sample_full_replace_summary` (`xai-grok-compaction`) with input ladder Verbatim → VerbatimFitted → Lossy. Grok-build drops a recent-message tail via `CompactionStateContext::for_compaction()`.
+- `PreCompact` hook already fires in `run_compact_inner`.
 - Compaction is a summarization sample (`SELF_SUMMARIZATION_PROMPT`), not a snippet keep/drop loop. There is **no** Rock `KeepSnippet` equivalent on grep today.
 
 ### Truncation
@@ -151,12 +155,16 @@ The conversation itself is chat-state history (user / assistant / tool results),
 - Tool results: `DEFAULT_TOOL_OUTPUT_BYTES = 40_000`, `DEFAULT_TOOL_OUTPUT_CHARS = 20_000` (`xai-grok-tools/src/lib.rs`).
 - Helpers: `crates/codegen/xai-grok-tools/src/util/truncate.rs` (`truncate_line`, `truncate_str`, preview + marker), `util/mcp_truncate.rs` (MCP inline cap / `GROK_MAX_MCP_OUTPUT_BYTES`).
 - Terminal / background task output is independently size-capped (`xai-grok-shell-terminal`).
+- Token math: `xai-token-estimation` (`len/4`, `exceeds_threshold`). Running total: `get_estimated_total_tokens()`.
 
 ### Where a Jev filter could run (fail-open)
 
-1. **Compaction input selection** — before `run_compact_only` builds the summarization payload (`helpers/prepared_compaction_history.rs`, `compaction.rs`). Ask noul/choice “keep this older tool result / file clip?” and drop only on a live yes-to-drop. Errors keep the item.
-2. **Tool-result truncation** — `truncate.rs` / MCP truncate, when a result is about to be clipped. Less useful than (1); truncation already keeps a head/preview.
-3. **Grep hit filter** — Rock’s `KeepSnippet` analog would sit in `GrepTool` after each match. Highest token leverage for search dumps; not compaction. Offline/error must keep the hit.
+Highest leverage first (what the **next completion** actually sees):
+
+1. **Per-turn prune** — `build_conversation_request` after `prune_conversation` (`request_builder.rs`). Drop/shrink older `ToolResult`s only on a live keep=false. Errors keep today’s prune behavior.
+2. **Compaction input** — before `sample_full_replace_summary` in `run_compact_inner` (same prune is reapplied via `apply_turn_request_pruning`). `PreCompact` can observe but should not be the only gate.
+3. **Tool-result truncation** — `truncate.rs` / MCP truncate. Less useful; already keeps a head/preview.
+4. **Grep hit filter** — Rock’s `KeepSnippet` analog on `GrepTool` after each match. Highest leverage for search dumps; offline/error must keep the hit.
 
 There is no existing relevance scorer to hook. Any filter is new code behind `jev_enabled()` plus an explicit feature flag.
 
@@ -181,7 +189,7 @@ Home: `$GROK_HOME` or `~/.grok` (`xai_dirs::grok_home` / `resolve_grok_home`, `c
 
 `system managed` → `managed` → `user config.toml` → `GROK_CONFIG` / `GROK_CONFIG_PATH` overlay → requirements / MDM.
 
-`$VAR` expansion happens in `load_toml_file` (`loader.rs`). The overlay is an allowlisted soft-settings merge (`env_overlay.rs`); it must not become a permission-escalation or secret-injection path. **Do not** put `jev.api_key` on the overlay allowlist.
+`$VAR` expansion happens in `load_toml_file` (`loader.rs`). The overlay is an allowlisted soft-settings merge (`env_overlay.rs`, `OVERLAY_ALLOW_PATHS` in `config_override.rs`: `models`, `features`, narrowed `toolset`, `shell_environment_policy` only); it must not become a permission-escalation or secret-injection path. **Do not** put `jev` or `jev.api_key` on that allowlist.
 
 User-facing precedence (CLI > env > requirements > overlay > config.toml > managed > defaults) is documented in `crates/codegen/xai-grok-pager/docs/user-guide/05-configuration.md`.
 
@@ -198,7 +206,7 @@ Jev must **not** reuse `XAI_API_KEY`. Use `JEV_API_KEY` then `TYPESAFE_API_KEY`,
 
 ### Where a `[jev]` section should live
 
-Add a small `JevConfig` struct next to other leaf config types (`xai-grok-config-types` or a new `xai-grok-jev` crate that only the shell/agent depend on). Parse it from the **effective** config so file layers merge, then overlay env:
+Add a small `JevConfig` on the typed shell `Config` (`crates/codegen/xai-grok-shell/src/agent/config.rs`, `Config::new_from_toml_cfg`) and optionally a leaf type in `xai-grok-config-types`. Feature flags can follow `BoolFlag` (`xai-grok-config/src/resolved.rs`: requirements > CLI > env > config > managed > default). Parse from the **effective** config so file layers merge, then overlay env:
 
 1. `std::env::var("JEV_API_KEY")` if non-empty.
 2. Else `TYPESAFE_API_KEY` if non-empty.
