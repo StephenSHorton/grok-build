@@ -309,6 +309,75 @@ fn parses_cursor_worker_table_without_unrecognized_keys() {
     let cfg = Config::new_from_toml_cfg(&empty).expect("config should parse");
     assert_eq!(CursorWorkerConfig::default(), cfg.cursor_worker);
 }
+
+fn jev_env_cleared() -> (EnvGuard, EnvGuard) {
+    (
+        EnvGuard::unset(xai_grok_config_types::JEV_API_KEY_ENV),
+        EnvGuard::unset(xai_grok_config_types::TYPESAFE_API_KEY_ENV),
+    )
+}
+
+#[test]
+#[serial]
+fn empty_env_and_empty_file_disable_jev() {
+    let _env = jev_env_cleared();
+    let raw: toml::Value = toml::from_str("").unwrap();
+    let cfg = Config::new_from_toml_cfg(&raw).expect("empty config should parse");
+    assert!(!cfg.jev_enabled());
+    assert_eq!(cfg.jev_key(), None);
+    assert_eq!(cfg.jev, xai_grok_config_types::JevConfig::default());
+}
+
+#[test]
+#[serial]
+fn file_key_enables_jev_and_empty_env_does_not_count() {
+    let _jev = EnvGuard::set(xai_grok_config_types::JEV_API_KEY_ENV, "");
+    let _typesafe = EnvGuard::set(xai_grok_config_types::TYPESAFE_API_KEY_ENV, "   ");
+    let raw: toml::Value = toml::from_str("[jev]\napi_key = \"file-key\"\n").unwrap();
+    let cfg = Config::new_from_toml_cfg(&raw).expect("config should parse");
+    assert!(
+        cfg.config_warnings.is_empty(),
+        "[jev] must be a declared table: {:?}",
+        cfg.config_warnings
+    );
+    assert_eq!(cfg.jev.api_key.as_deref(), Some("file-key"));
+    assert_eq!(cfg.jev_key().as_deref(), Some("file-key"));
+    assert!(cfg.jev_enabled());
+}
+
+#[test]
+#[serial]
+fn jev_api_key_overrides_file_and_typesafe() {
+    let _jev = EnvGuard::set(xai_grok_config_types::JEV_API_KEY_ENV, "jev-key");
+    let _typesafe = EnvGuard::set(xai_grok_config_types::TYPESAFE_API_KEY_ENV, "typesafe-key");
+    let raw: toml::Value = toml::from_str("[jev]\napi_key = \"file-key\"\n").unwrap();
+    let cfg = Config::new_from_toml_cfg(&raw).expect("config should parse");
+    assert_eq!(cfg.jev_key().as_deref(), Some("jev-key"));
+    assert!(cfg.jev_enabled());
+}
+
+#[test]
+#[serial]
+fn typesafe_api_key_used_when_jev_unset() {
+    let _jev = EnvGuard::unset(xai_grok_config_types::JEV_API_KEY_ENV);
+    let _typesafe = EnvGuard::set(xai_grok_config_types::TYPESAFE_API_KEY_ENV, "typesafe-key");
+    let raw: toml::Value = toml::from_str("[jev]\napi_key = \"file-key\"\n").unwrap();
+    let cfg = Config::new_from_toml_cfg(&raw).expect("config should parse");
+    assert_eq!(cfg.jev_key().as_deref(), Some("typesafe-key"));
+    assert!(cfg.jev_enabled());
+}
+
+#[test]
+fn default_config_serialize_omits_jev() {
+    let raw: toml::Value = toml::from_str("").unwrap();
+    let cfg = Config::new_from_toml_cfg(&raw).expect("empty config should parse");
+    let value = toml::Value::try_from(&cfg).expect("serialize");
+    assert!(
+        value.get("jev").is_none(),
+        "no-key inspect/persist must omit [jev]: {value}"
+    );
+}
+
 #[test]
 fn parses_toolset_bash_float_timeout() {
     let raw_config: toml::Value = toml::from_str(
