@@ -6,6 +6,7 @@
 
 mod ask;
 mod client;
+mod keep;
 mod safety;
 mod types;
 
@@ -16,6 +17,10 @@ pub use ask::{
 pub use client::{
     Client, Error, HOSTED_DECIDE_URL, OFFICIAL_DECIDE_URL, RESPONSE_BODY_CAP, Settings, TIMEOUT,
     endpoint_for,
+};
+pub use keep::{
+    DEFAULT_MIN_CONFIDENCE, KEEP_ANSWER_NAME, KEEP_INSTRUCTIONS, QUERY_CLIP_CHARS,
+    SNIPPET_CLIP_CHARS, clip_text, keep_question, keep_snippet, maybe_keep_snippet,
 };
 pub use safety::{
     ARGS_CLIP_CHARS, DEFAULT_RISK_BLOCK, RISK_ANSWER_NAME, RISK_INSTRUCTIONS, SafetyVerdict,

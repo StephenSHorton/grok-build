@@ -9,7 +9,8 @@ use std::collections::BTreeMap;
 use xai_grok_jev::{AskResult, Query, ask, ask_failed, validate_queries};
 
 pub use xai_grok_jev::{
-    Client as JevClient, SafetyVerdict, Settings as JevSettings, maybe_risk_check,
+    Client as JevClient, SafetyVerdict, Settings as JevSettings, maybe_keep_snippet,
+    maybe_risk_check,
 };
 
 use crate::types::output::ToolOutput;
