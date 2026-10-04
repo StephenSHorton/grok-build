@@ -53,6 +53,8 @@ pub struct Settings {
     pub risk_block: f64,
     /// When true, a live safety noul at/above `risk_block` does not deny. Default false.
     pub allow_destructive: bool,
+    /// Optional fail-open context filter on older tool results. Default off.
+    pub context_filter: bool,
 }
 
 impl Settings {
@@ -75,6 +77,7 @@ impl Settings {
             safety_check: false,
             risk_block: crate::DEFAULT_RISK_BLOCK,
             allow_destructive: false,
+            context_filter: false,
         })
     }
 
@@ -90,6 +93,11 @@ impl Settings {
     /// Safety check runs only with a key and `safety_check = true`.
     pub fn safety_active(&self) -> bool {
         self.is_enabled() && self.safety_check
+    }
+
+    /// Context filter runs only with a key and `context_filter = true`.
+    pub fn context_filter_active(&self) -> bool {
+        self.is_enabled() && self.context_filter
     }
 
     /// Rock `riskAt`: non-positive values fall back to [`crate::DEFAULT_RISK_BLOCK`].

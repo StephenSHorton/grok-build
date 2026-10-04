@@ -455,6 +455,40 @@ fn jev_settings_copies_safety_flags_when_key_present() {
 }
 
 #[test]
+#[serial]
+fn file_context_filter_true_without_key_does_not_enable_settings() {
+    let _env = jev_env_cleared();
+    let raw: toml::Value = toml::from_str("[jev]\ncontext_filter = true\n").unwrap();
+    let cfg = Config::new_from_toml_cfg(&raw).expect("config should parse");
+    assert!(cfg.jev.context_filter);
+    assert!(!cfg.jev_enabled());
+    assert_eq!(cfg.jev_settings(), None);
+}
+
+#[test]
+#[serial]
+fn jev_settings_context_filter_stays_off_when_key_present_and_flag_unset() {
+    let _env = jev_env_cleared();
+    let raw: toml::Value = toml::from_str("[jev]\napi_key = \"file-key\"\n").unwrap();
+    let cfg = Config::new_from_toml_cfg(&raw).expect("config should parse");
+    let settings = cfg.jev_settings().expect("key");
+    assert!(!settings.context_filter);
+    assert!(!settings.context_filter_active());
+}
+
+#[test]
+#[serial]
+fn jev_settings_copies_context_filter_when_key_present() {
+    let _env = jev_env_cleared();
+    let raw: toml::Value =
+        toml::from_str("[jev]\napi_key = \"file-key\"\ncontext_filter = true\n").unwrap();
+    let cfg = Config::new_from_toml_cfg(&raw).expect("config should parse");
+    let settings = cfg.jev_settings().expect("key");
+    assert!(settings.context_filter);
+    assert!(settings.context_filter_active());
+}
+
+#[test]
 fn parses_toolset_bash_float_timeout() {
     let raw_config: toml::Value = toml::from_str(
         r#"

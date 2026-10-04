@@ -1860,6 +1860,7 @@ impl Config {
             settings.risk_block = risk_block;
         }
         settings.allow_destructive = self.jev.allow_destructive;
+        settings.context_filter = self.jev.context_filter;
         Some(settings)
     }
     /// Whether product analytics may run. Every product analytics check calls this.

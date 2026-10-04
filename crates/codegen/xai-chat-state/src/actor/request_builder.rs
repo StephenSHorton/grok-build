@@ -131,6 +131,11 @@ pub(crate) fn should_prune(total_tokens: u64, context_window: std::num::NonZeroU
 
 /// Prune old, large tool results from the conversation in place.
 /// Turn age is estimated by walking backward and counting `User` items.
+///
+/// Optional Jev context filtering (default off) does **not** run here: prune
+/// stays sync and this crate has no HTTP client. The shell applies a fail-open
+/// keep/drop pass to the same older tool results on the request clone after
+/// `build_request`.
 pub(crate) fn prune_conversation(conversation: &mut [ConversationItem], config: &PruningConfig) {
     if !config.enabled {
         return;

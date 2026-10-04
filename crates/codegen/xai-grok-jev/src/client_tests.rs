@@ -45,6 +45,11 @@ fn from_resolved_defaults_nudge_off() {
         !settings.safety_active(),
         "a key alone must not enable the safety check"
     );
+    assert!(!settings.context_filter);
+    assert!(
+        !settings.context_filter_active(),
+        "a key alone must not enable the context filter"
+    );
 }
 
 #[test]
@@ -71,6 +76,14 @@ fn safety_active_requires_key_and_flag() {
     assert_eq!(settings.risk_block_or_default(), crate::DEFAULT_RISK_BLOCK);
     settings.risk_block = 0.9;
     assert_eq!(settings.risk_block_or_default(), 0.9);
+}
+
+#[test]
+fn context_filter_active_requires_key_and_flag() {
+    let mut settings = Settings::from_resolved("k", None, None).expect("key");
+    assert!(!settings.context_filter_active());
+    settings.context_filter = true;
+    assert!(settings.context_filter_active());
 }
 
 #[test]
