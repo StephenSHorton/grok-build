@@ -3466,7 +3466,8 @@ mod tests {
             "no-key prompt must stay identical: {}",
             agent.system_prompt()
         );
-        let resources = agent.tool_bridge().toolset().resources.lock().await;
+        let toolset = agent.tool_bridge().toolset();
+        let resources = toolset.resources.lock().await;
         assert!(
             resources
                 .get::<xai_grok_tools::reminders::JevNudgeConfig>()
@@ -3491,7 +3492,8 @@ mod tests {
             !jev_settings_for_tests().nudge_active(),
             "from_resolved must keep nudge off"
         );
-        let resources = agent.tool_bridge().toolset().resources.lock().await;
+        let toolset = agent.tool_bridge().toolset();
+        let resources = toolset.resources.lock().await;
         assert!(
             resources
                 .get::<xai_grok_tools::reminders::JevNudgeConfig>()
@@ -3515,7 +3517,8 @@ mod tests {
         .build()
         .await
         .expect("key, nudge on");
-        let resources = agent.tool_bridge().toolset().resources.lock().await;
+        let toolset = agent.tool_bridge().toolset();
+        let resources = toolset.resources.lock().await;
         assert_eq!(
             resources
                 .get::<xai_grok_tools::reminders::JevNudgeConfig>()
