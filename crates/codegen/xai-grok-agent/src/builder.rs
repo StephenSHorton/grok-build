@@ -1211,6 +1211,13 @@ impl AgentBuilder {
                 Ok(client) => tool_bridge.update_resource(client).await,
                 Err(err) => tracing::warn!("failed to construct Jev client: {err}"),
             }
+            if settings.nudge_active() {
+                tool_bridge
+                    .update_resource(xai_grok_tools::reminders::JevNudgeConfig {
+                        every: settings.nudge_every,
+                    })
+                    .await;
+            }
         }
         if let Some(bytes) = self.mcp_max_output_bytes {
             tool_bridge.toolset().resources.lock().await.insert(
@@ -3439,6 +3446,84 @@ mod tests {
         assert!(
             names.contains(&"ask_jev".to_string()),
             "plan mode must still list ask_jev when enabled: {names:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn default_system_prompt_has_no_ask_jev() {
+        let _env = xai_grok_env::EnvVarGuard::remove("JEV_API_KEY").and_remove("TYPESAFE_API_KEY");
+        let agent = AgentBuilder::new(
+            std::env::temp_dir(),
+            Arc::new(xai_grok_tools::computer::local::LocalTerminalBackend::new()),
+            xai_grok_tools::notification::ToolNotificationHandle::noop(),
+        )
+        .from_definition(crate::config::AgentDefinition::default_grok_build())
+        .build()
+        .await
+        .expect("default grok-build agent");
+        assert!(
+            !agent.system_prompt().contains("ask_jev"),
+            "no-key prompt must stay identical: {}",
+            agent.system_prompt()
+        );
+        let toolset = agent.tool_bridge().toolset();
+        let resources = toolset.resources.lock().await;
+        assert!(
+            resources
+                .get::<xai_grok_tools::reminders::JevNudgeConfig>()
+                .is_none(),
+            "no-key path must not insert JevNudgeConfig"
+        );
+    }
+
+    #[tokio::test]
+    async fn key_without_nudge_does_not_insert_nudge_config() {
+        let agent = AgentBuilder::new(
+            std::env::temp_dir(),
+            Arc::new(xai_grok_tools::computer::local::LocalTerminalBackend::new()),
+            xai_grok_tools::notification::ToolNotificationHandle::noop(),
+        )
+        .from_definition(crate::config::AgentDefinition::default_grok_build())
+        .with_jev_settings(Some(jev_settings_for_tests()))
+        .build()
+        .await
+        .expect("key, nudge off");
+        assert!(
+            !jev_settings_for_tests().nudge_active(),
+            "from_resolved must keep nudge off"
+        );
+        let toolset = agent.tool_bridge().toolset();
+        let resources = toolset.resources.lock().await;
+        assert!(
+            resources
+                .get::<xai_grok_tools::reminders::JevNudgeConfig>()
+                .is_none(),
+            "key + nudge off must not insert JevNudgeConfig"
+        );
+    }
+
+    #[tokio::test]
+    async fn key_and_nudge_inserts_nudge_config() {
+        let mut settings = jev_settings_for_tests();
+        settings.nudge = true;
+        settings.nudge_every = 2;
+        let agent = AgentBuilder::new(
+            std::env::temp_dir(),
+            Arc::new(xai_grok_tools::computer::local::LocalTerminalBackend::new()),
+            xai_grok_tools::notification::ToolNotificationHandle::noop(),
+        )
+        .from_definition(crate::config::AgentDefinition::default_grok_build())
+        .with_jev_settings(Some(settings))
+        .build()
+        .await
+        .expect("key, nudge on");
+        let toolset = agent.tool_bridge().toolset();
+        let resources = toolset.resources.lock().await;
+        assert_eq!(
+            resources
+                .get::<xai_grok_tools::reminders::JevNudgeConfig>()
+                .copied(),
+            Some(xai_grok_tools::reminders::JevNudgeConfig { every: 2 })
         );
     }
 }

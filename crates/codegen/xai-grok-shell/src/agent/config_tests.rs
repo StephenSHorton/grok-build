@@ -379,6 +379,43 @@ fn default_config_serialize_omits_jev() {
 }
 
 #[test]
+#[serial]
+fn file_nudge_true_without_key_does_not_enable_settings() {
+    let _env = jev_env_cleared();
+    let raw: toml::Value = toml::from_str("[jev]\nnudge = true\nnudge_every = 1\n").unwrap();
+    let cfg = Config::new_from_toml_cfg(&raw).expect("config should parse");
+    assert!(cfg.jev.nudge);
+    assert_eq!(cfg.jev.nudge_every, 1);
+    assert!(!cfg.jev_enabled());
+    assert_eq!(cfg.jev_settings(), None);
+}
+
+#[test]
+#[serial]
+fn jev_settings_nudge_stays_off_when_key_present_and_flag_unset() {
+    let _env = jev_env_cleared();
+    let raw: toml::Value = toml::from_str("[jev]\napi_key = \"file-key\"\n").unwrap();
+    let cfg = Config::new_from_toml_cfg(&raw).expect("config should parse");
+    let settings = cfg.jev_settings().expect("key");
+    assert!(!settings.nudge);
+    assert_eq!(settings.nudge_every, 2);
+    assert!(!settings.nudge_active());
+}
+
+#[test]
+#[serial]
+fn jev_settings_copies_nudge_flags_when_key_present() {
+    let _env = jev_env_cleared();
+    let raw: toml::Value =
+        toml::from_str("[jev]\napi_key = \"file-key\"\nnudge = true\nnudge_every = 3\n").unwrap();
+    let cfg = Config::new_from_toml_cfg(&raw).expect("config should parse");
+    let settings = cfg.jev_settings().expect("key");
+    assert!(settings.nudge);
+    assert_eq!(settings.nudge_every, 3);
+    assert!(settings.nudge_active());
+}
+
+#[test]
 fn parses_toolset_bash_float_timeout() {
     let raw_config: toml::Value = toml::from_str(
         r#"

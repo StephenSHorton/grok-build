@@ -1846,12 +1846,16 @@ impl Config {
         xai_grok_config_types::jev_enabled(self.jev.api_key.as_deref())
     }
     /// Settings for `ask_jev` when [`Self::jev_enabled`] is true. `None` on the no-key path.
+    /// Feature flags are copied from `[jev]` but stay off unless the file/user set them.
     pub fn jev_settings(&self) -> Option<xai_grok_tools::implementations::grok_build::JevSettings> {
-        xai_grok_tools::implementations::grok_build::JevSettings::from_resolved(
+        let mut settings = xai_grok_tools::implementations::grok_build::JevSettings::from_resolved(
             self.jev_key()?,
             self.jev.base_url.clone(),
             self.jev.model.clone(),
-        )
+        )?;
+        settings.nudge = self.jev.nudge;
+        settings.nudge_every = self.jev.nudge_every;
+        Some(settings)
     }
     /// Whether product analytics may run. Every product analytics check calls this.
     pub fn product_analytics_enabled(&self, auth: Option<&xai_grok_login::GrokAuth>) -> bool {
