@@ -1215,6 +1215,11 @@ pub(crate) async fn spawn_session_actor(
         web_search_domains,
         backend_search: backend_tools_enabled,
         web_fetch_config: web_fetch_config.clone(),
+        jev_settings: crate::config::load_effective_config()
+            .ok()
+            .and_then(|raw| crate::agent::config::Config::new_from_toml_cfg(&raw).ok())
+            .unwrap_or_default()
+            .jev_settings(),
         image_gen_config: image_gen_config.clone(),
         video_gen_config: video_gen_config.clone(),
         app_builder_deployer_config: app_builder_deployer_config.clone(),

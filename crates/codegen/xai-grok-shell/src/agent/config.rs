@@ -1845,6 +1845,14 @@ impl Config {
     pub fn jev_enabled(&self) -> bool {
         xai_grok_config_types::jev_enabled(self.jev.api_key.as_deref())
     }
+    /// Settings for `ask_jev` when [`Self::jev_enabled`] is true. `None` on the no-key path.
+    pub fn jev_settings(&self) -> Option<xai_grok_tools::implementations::grok_build::JevSettings> {
+        xai_grok_tools::implementations::grok_build::JevSettings::from_resolved(
+            self.jev_key()?,
+            self.jev.base_url.clone(),
+            self.jev.model.clone(),
+        )
+    }
     /// Whether product analytics may run. Every product analytics check calls this.
     pub fn product_analytics_enabled(&self, auth: Option<&xai_grok_login::GrokAuth>) -> bool {
         self.is_telemetry_enabled() && !auth.is_some_and(|auth| auth.is_zdr_team())

@@ -10,6 +10,7 @@
 //! `AvailableSkills`, `BashParams`) and registers every built-in tool.
 #[path = "app_builder_stub.rs"]
 pub mod app_builder;
+pub mod ask_jev;
 pub mod ask_user_question;
 pub mod bash;
 #[path = "deploy_app_stub.rs"]
@@ -42,6 +43,7 @@ pub mod web_fetch;
 pub mod web_search;
 pub mod workflow;
 pub use app_builder::AppBuilderDeployerConfig;
+pub use ask_jev::{ASK_JEV_TOOL_NAME, AskJevInput, AskJevTool, JevSettings};
 pub use ask_user_question::AskUserQuestionTool;
 pub use bash::BashTool;
 pub use deploy_app::DEPLOY_APP_TOOL_NAME;
@@ -71,8 +73,9 @@ pub use send_subagent_message::{
 };
 pub use sessions::{
     SESSIONS_CLAIM_TOOL_NAME, SESSIONS_CLOSE_TOOL_NAME, SESSIONS_LIST_TOOL_NAME,
-    SESSIONS_OPEN_TOOL_NAME, SESSIONS_RELEASE_TOOL_NAME, SESSIONS_SEND_TOOL_NAME, SessionsClaimTool,
-    SessionsCloseTool, SessionsListTool, SessionsOpenTool, SessionsReleaseTool, SessionsSendTool,
+    SESSIONS_OPEN_TOOL_NAME, SESSIONS_RELEASE_TOOL_NAME, SESSIONS_SEND_TOOL_NAME,
+    SessionsClaimTool, SessionsCloseTool, SessionsListTool, SessionsOpenTool, SessionsReleaseTool,
+    SessionsSendTool,
 };
 pub use task::{TaskTool, is_task_tool_id};
 pub use task_output::{GetTerminalCommandOutputTool, TaskOutputTool, WaitTasksTool};
