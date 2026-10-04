@@ -138,6 +138,60 @@ pub struct PromptContext {
     /// Not the UI picker name. Defaults to [`DEFAULT_SYSTEM_PROMPT_LABEL`].
     #[serde(default = "default_system_prompt_label")]
     pub system_prompt_label: String,
+    /// Present only when Jev is enabled for this session. Omitted from JSON when
+    /// `None` so a no-key `PromptContext` stays byte-identical to pre-Jev dumps.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jev: Option<JevPromptInfo>,
+}
+/// Which optional Jev extras the model should know about. Never includes the API key.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct JevPromptInfo {
+    /// Self-validation reminder after successful edits/shells.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub nudge: bool,
+    /// Fail-open destructive-call check after permission allow.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub safety_check: bool,
+    /// Fail-open omit of older tool results on the next request.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub context_filter: bool,
+}
+impl JevPromptInfo {
+    /// Concise `<jev>` system-prompt section. Callers append this only when Jev is on.
+    pub fn render_section(&self) -> String {
+        let extras = match (self.nudge, self.safety_check, self.context_filter) {
+            (false, false, false) => {
+                "Extras off: nudge, safety_check, and context_filter.".to_string()
+            }
+            (nudge, safety, filter) => {
+                let mut parts = Vec::new();
+                if nudge {
+                    parts.push(
+                        "nudge: a reminder may suggest ask_jev after successful edits/shells",
+                    );
+                }
+                if safety {
+                    parts.push("safety_check: a deny means Jev judged the bash/edit/write/MCP/apply_patch call destructive");
+                }
+                if filter {
+                    parts.push(
+                        "context_filter: older tool results may be omitted from the next request",
+                    );
+                }
+                format!("On: {}.", parts.join("; "))
+            }
+        };
+        format!(
+            "<jev>\n\
+Jev is a typed judge, not an LLM. Use ask_jev for named boolean/choice/score questions about facts you put in `state` (Jev cannot read files). Batch related questions in one call.\n\
+- boolean: noul float (aliases noul/yes/yesno); no yes/no threshold.\n\
+- choice: requires `options` (label → meaning).\n\
+- score: requires `levels` (2–10 descriptions).\n\
+A failed or unanswered call is an observation (`error`/`detail`, no `value`). Never invent an answer; continue the turn.\n\
+{extras}\n\
+</jev>"
+        )
+    }
 }
 /// Default identity on trim-tool-descriptions (`You are Grok released by xAI`).
 pub const DEFAULT_SYSTEM_PROMPT_LABEL: &str = "Grok";
@@ -195,6 +249,7 @@ impl Default for PromptContext {
             current_date: None,
             is_non_interactive: false,
             system_prompt_label: default_system_prompt_label(),
+            jev: None,
         }
     }
 }
@@ -268,7 +323,7 @@ impl PromptContext {
     pub fn render_with_renderer(&self, renderer: &TemplateRenderer) -> Option<String> {
         let placeholders = self.placeholders();
         let render = |template: &str| renderer.render_with_extra(template, &placeholders).ok();
-        let prompt = match self.prompt_mode {
+        let mut prompt = match self.prompt_mode {
             PromptMode::Extend => {
                 let decrypted;
                 let base = match &self.system_prompt {
@@ -295,7 +350,15 @@ impl PromptContext {
             }
             PromptMode::Full => render(self.prompt_body.as_deref().unwrap_or(""))?,
         };
+        if let Some(section) = self.format_jev_section() {
+            prompt.push_str("\n\n");
+            prompt.push_str(&section);
+        }
         Some(prompt)
+    }
+    /// `<jev>` block when Jev is enabled; `None` otherwise so the rendered prompt stays unchanged.
+    pub fn format_jev_section(&self) -> Option<String> {
+        self.jev.as_ref().map(JevPromptInfo::render_section)
     }
 }
 /// A system prompt with the [`PromptContext`] it was rendered from; only [`PromptContext::render_paired`] produces one.
@@ -340,6 +403,7 @@ mod tests {
             current_date: None,
             is_non_interactive: false,
             system_prompt_label: default_system_prompt_label(),
+            jev: None,
         }
     }
     #[test]
@@ -654,6 +718,7 @@ mod tests {
             current_date: None,
             is_non_interactive: false,
             system_prompt_label: default_system_prompt_label(),
+            jev: None,
         }
     }
     #[test]
@@ -1065,5 +1130,88 @@ mod tests {
             !ctx.persona_summaries.is_empty(),
             "primary must keep persona summaries"
         );
+    }
+
+    /// Locked no-key `<jev>` absence + extras-off section. Changing this text is a prompt-cost change.
+    const JEV_SECTION_EXTRAS_OFF: &str = "\
+<jev>
+Jev is a typed judge, not an LLM. Use ask_jev for named boolean/choice/score questions about facts you put in `state` (Jev cannot read files). Batch related questions in one call.
+- boolean: noul float (aliases noul/yes/yesno); no yes/no threshold.
+- choice: requires `options` (label → meaning).
+- score: requires `levels` (2–10 descriptions).
+A failed or unanswered call is an observation (`error`/`detail`, no `value`). Never invent an answer; continue the turn.
+Extras off: nudge, safety_check, and context_filter.
+</jev>";
+
+    #[test]
+    fn no_key_prompt_context_json_omits_jev() {
+        let json = serde_json::to_string(&test_context()).unwrap();
+        assert!(
+            !json.contains("jev"),
+            "no-key PromptContext JSON must omit jev: {json}"
+        );
+        assert!(!json.contains("ask_jev"));
+    }
+
+    #[test]
+    fn no_key_render_is_byte_identical_with_explicit_none() {
+        let renderer = TemplateRenderer::new(Default::default(), Default::default());
+        let mut ctx = test_context();
+        let off = ctx.render_with_renderer(&renderer).unwrap();
+        ctx.jev = None;
+        let also_off = ctx.render_with_renderer(&renderer).unwrap();
+        assert_eq!(off, also_off);
+        assert!(!off.contains("ask_jev"));
+        assert!(!off.contains("<jev>"));
+        assert!(!off.contains("typed judge"));
+    }
+
+    #[test]
+    fn jev_section_snapshot_extras_off() {
+        assert_eq!(
+            JevPromptInfo::default().render_section(),
+            JEV_SECTION_EXTRAS_OFF
+        );
+    }
+
+    #[test]
+    fn enabled_render_appends_jev_section_only() {
+        let renderer = TemplateRenderer::new(Default::default(), Default::default());
+        let mut ctx = test_context();
+        let off = ctx.render_with_renderer(&renderer).unwrap();
+        ctx.jev = Some(JevPromptInfo::default());
+        let on = ctx.render_with_renderer(&renderer).unwrap();
+        let suffix = on
+            .strip_prefix(off.as_str())
+            .expect("enabled prompt must be the no-key prompt plus a suffix");
+        assert_eq!(suffix, format!("\n\n{JEV_SECTION_EXTRAS_OFF}"));
+    }
+
+    #[test]
+    fn jev_section_lists_only_active_extras() {
+        let all_on = JevPromptInfo {
+            nudge: true,
+            safety_check: true,
+            context_filter: true,
+        }
+        .render_section();
+        assert!(all_on.contains("nudge: a reminder may suggest ask_jev"));
+        assert!(all_on.contains("safety_check: a deny means Jev judged"));
+        assert!(all_on.contains("context_filter: older tool results may be omitted"));
+        assert!(!all_on.contains("Extras off:"));
+    }
+
+    #[test]
+    fn jev_prompt_info_json_skips_false_flags() {
+        let json = serde_json::to_string(&JevPromptInfo::default()).unwrap();
+        assert_eq!(json, "{}");
+        let on = JevPromptInfo {
+            nudge: true,
+            ..JevPromptInfo::default()
+        };
+        let json = serde_json::to_string(&on).unwrap();
+        assert!(json.contains("\"nudge\":true"));
+        assert!(!json.contains("safety_check"));
+        assert!(!json.contains("context_filter"));
     }
 }

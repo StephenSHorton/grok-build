@@ -1353,6 +1353,15 @@ impl AgentBuilder {
             ),
             is_non_interactive: self.is_non_interactive,
             system_prompt_label: self.system_prompt_label,
+            jev: self
+                .jev_settings
+                .as_ref()
+                .filter(|settings| settings.is_enabled())
+                .map(|settings| crate::prompt::context::JevPromptInfo {
+                    nudge: settings.nudge_active(),
+                    safety_check: settings.safety_active(),
+                    context_filter: settings.context_filter_active(),
+                }),
         };
         let (prompt_render_timer, prompt_render_span) = build_await_step!("prompt_render");
         let system_prompt = prompt_context
@@ -3461,10 +3470,19 @@ mod tests {
         .build()
         .await
         .expect("default grok-build agent");
+        let prompt = agent.system_prompt();
         assert!(
-            !agent.system_prompt().contains("ask_jev"),
-            "no-key prompt must stay identical: {}",
-            agent.system_prompt()
+            !prompt.contains("ask_jev"),
+            "no-key prompt must stay identical: {prompt}"
+        );
+        assert!(
+            !prompt.contains("<jev>"),
+            "no-key prompt must not grow a Jev section: {prompt}"
+        );
+        let ctx_json = serde_json::to_string(agent.prompt_context()).expect("prompt context json");
+        assert!(
+            !ctx_json.contains("\"jev\""),
+            "no-key PromptContext persist dump must omit jev: {ctx_json}"
         );
         let toolset = agent.tool_bridge().toolset();
         let resources = toolset.resources.lock().await;
@@ -3529,5 +3547,59 @@ mod tests {
                 .copied(),
             Some(xai_grok_tools::reminders::JevNudgeConfig { every: 2 })
         );
+    }
+
+    #[tokio::test]
+    async fn enabled_system_prompt_includes_jev_section() {
+        let agent = AgentBuilder::new(
+            std::env::temp_dir(),
+            Arc::new(xai_grok_tools::computer::local::LocalTerminalBackend::new()),
+            xai_grok_tools::notification::ToolNotificationHandle::noop(),
+        )
+        .from_definition(crate::config::AgentDefinition::default_grok_build())
+        .with_jev_settings(Some(jev_settings_for_tests()))
+        .build()
+        .await
+        .expect("key, extras off");
+        let prompt = agent.system_prompt();
+        assert!(
+            prompt.contains("<jev>"),
+            "enabled prompt must include the Jev section: {prompt}"
+        );
+        assert!(prompt.contains("ask_jev"));
+        assert!(prompt.contains("Jev cannot read files"));
+        assert!(prompt.contains("Never invent an answer"));
+        assert!(
+            prompt.contains("Extras off: nudge, safety_check, and context_filter."),
+            "key-only must report extras off: {prompt}"
+        );
+        assert_eq!(
+            agent.prompt_context().jev.as_ref(),
+            Some(&crate::prompt::context::JevPromptInfo::default())
+        );
+    }
+
+    #[tokio::test]
+    async fn enabled_system_prompt_lists_active_extras() {
+        let mut settings = jev_settings_for_tests();
+        settings.nudge = true;
+        settings.nudge_every = 2;
+        settings.safety_check = true;
+        settings.context_filter = true;
+        let agent = AgentBuilder::new(
+            std::env::temp_dir(),
+            Arc::new(xai_grok_tools::computer::local::LocalTerminalBackend::new()),
+            xai_grok_tools::notification::ToolNotificationHandle::noop(),
+        )
+        .from_definition(crate::config::AgentDefinition::default_grok_build())
+        .with_jev_settings(Some(settings))
+        .build()
+        .await
+        .expect("key, extras on");
+        let prompt = agent.system_prompt();
+        assert!(prompt.contains("nudge: a reminder may suggest ask_jev"));
+        assert!(prompt.contains("safety_check: a deny means Jev judged"));
+        assert!(prompt.contains("context_filter: older tool results may be omitted"));
+        assert!(!prompt.contains("Extras off:"));
     }
 }
