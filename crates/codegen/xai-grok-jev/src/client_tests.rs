@@ -30,6 +30,31 @@ fn client_timeout_is_thirty_seconds() {
 }
 
 #[test]
+fn from_resolved_defaults_nudge_off() {
+    let settings = Settings::from_resolved("k", None, None).expect("key");
+    assert!(!settings.nudge);
+    assert_eq!(settings.nudge_every, 2);
+    assert!(
+        !settings.nudge_active(),
+        "a key alone must not enable the nudge"
+    );
+}
+
+#[test]
+fn nudge_active_requires_key_flag_and_positive_every() {
+    let mut settings = Settings::from_resolved("k", None, None).expect("key");
+    settings.nudge = true;
+    assert!(settings.nudge_active());
+    settings.nudge_every = 0;
+    assert!(!settings.nudge_active());
+    settings.nudge_every = -1;
+    assert!(!settings.nudge_active());
+    settings.nudge_every = 2;
+    settings.nudge = false;
+    assert!(!settings.nudge_active());
+}
+
+#[test]
 fn helpers_set_wire_types() {
     let choice = choice_q("pick", [("a", "alpha"), ("b", "beta")]);
     assert_eq!(choice.kind, "choice");

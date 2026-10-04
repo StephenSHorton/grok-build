@@ -36,15 +36,20 @@ pub enum Error {
 }
 
 /// Settings used to construct a [`Client`]. Empty / whitespace keys are disabled.
+/// Feature flags stay off unless the caller sets them; a key alone does not enable extras.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Settings {
     pub api_key: String,
     pub base_url: Option<String>,
     pub model: Option<String>,
+    /// Optional self-validation nudge after a successful mutate. Default off.
+    pub nudge: bool,
+    /// Emit the nudge every N successful mutates. `<= 0` disables. Default 2.
+    pub nudge_every: i32,
 }
 
 impl Settings {
-    /// `None` when `api_key` is empty or whitespace.
+    /// `None` when `api_key` is empty or whitespace. Feature flags default off.
     pub fn from_resolved(
         api_key: impl Into<String>,
         base_url: Option<String>,
@@ -58,11 +63,18 @@ impl Settings {
             api_key,
             base_url: base_url.filter(|url| !url.trim().is_empty()),
             model: model.filter(|model| !model.trim().is_empty()),
+            nudge: false,
+            nudge_every: 2,
         })
     }
 
     pub fn is_enabled(&self) -> bool {
         !self.api_key.trim().is_empty()
+    }
+
+    /// Nudge runs only with a key, `nudge = true`, and `nudge_every > 0`.
+    pub fn nudge_active(&self) -> bool {
+        self.is_enabled() && self.nudge && self.nudge_every > 0
     }
 
     pub fn client(&self) -> Result<Client, Error> {

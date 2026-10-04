@@ -10,14 +10,17 @@
 //!   registry that fire after every tool call.
 //!
 //! This module contains the cross-cutting reminders:
-//! - [`LspDiagnosticsReminder`], [`SkillDiscoveryReminder`], [`TaskCompletionReminder`]
+//! - [`LspDiagnosticsReminder`], [`SkillDiscoveryReminder`], [`TaskCompletionReminder`],
+//!   [`JevNudgeReminder`] (no-op unless [`JevNudgeConfig`] is in Resources)
 //!
 //! All reminders are collected and appended in `call_new_tool()`.
 
+pub mod jev_nudge;
 pub mod lsp_diagnostics;
 pub mod skill_discovery;
 pub mod task_completion;
 
+pub use jev_nudge::{JEV_NUDGE_TEXT, JevNudgeConfig, JevNudgeReminder, JevNudgeState};
 pub use lsp_diagnostics::LspDiagnosticsReminder;
 pub use skill_discovery::SkillDiscoveryReminder;
 pub use task_completion::{TaskCompletionReminder, monitor_label};
