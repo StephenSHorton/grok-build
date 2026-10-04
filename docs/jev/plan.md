@@ -4,7 +4,24 @@ Jev is a fast typed judge (choice / score / noul). On this fork it is **strictly
 
 Rock (`StephenSHorton/rock`) is a Go Jev-first clone. This plan **matches Rock’s wire and `ask_jev` contract** and **does not** copy Rock’s process model. Rock refuses to start without a key (or runs an offline policy that is “not Jev”). We never do that.
 
-Read with [`harness-map.md`](harness-map.md).
+Read with [`harness-map.md`](harness-map.md). User-facing setup: [`README.md`](README.md).
+
+---
+
+## What shipped (2026-10-04)
+
+All planned slices landed on this fork’s `main`. Feature flags stay **off** even when a key is present. No key ⇒ no tool, no HTTP, no errors.
+
+| Slice | PR | What actually shipped |
+|---|---|---|
+| (a) config + `jev_enabled()` | [#6](https://github.com/StephenSHorton/grok-build/pull/6) | `JevConfig` on typed `Config`. Precedence `JEV_API_KEY` → `TYPESAFE_API_KEY` → `[jev].api_key`. `[jev]` is not on `OVERLAY_ALLOW_PATHS`. No `grok inspect` line (would change no-key output). |
+| (b) client | [#7](https://github.com/StephenSHorton/grok-build/pull/7) | Isolated `xai-grok-jev` crate: `EndpointFor`, 30s timeout, 1 MiB cap. Empty key is an error at `Decide`; no HTTP. No gates, no offline policy. |
+| (c) `ask_jev` | [#8](https://github.com/StephenSHorton/grok-build/pull/8) | Tool registered only when settings are enabled. `ToolKind::Other`, `is_read_only()`, plan-mode allowed. Failed Decide is JSON `error`/`detail`, no fabricated `value`. `JEV_API_KEY` / `TYPESAFE_API_KEY` added to BYOK scrub. No extra system-prompt sentence. Default builder tool-name snapshot locked to the pre-`ask_jev` fixture. |
+| (d) nudge | [#9](https://github.com/StephenSHorton/grok-build/pull/9) | `JevNudgeReminder` always registered; emits only when `JevNudgeConfig` is in Resources (`key && nudge && nudge_every > 0`). Counts successful `search_replace`/`write`/`apply_patch`/bash-exit-0. **No extra Decide call.** No system-prompt sentence (keeps the no-key prompt identical). |
+| (e) safety check | [#10](https://github.com/StephenSHorton/grok-build/pull/10) | After permission allow (plan-mode already not deny), optional noul “is this destructive?” for bash / edit (including write) / MCP / `apply_patch`. Deny only on **live** noul ≥ `risk_block` (default 0.72) when `allow_destructive` is false. Jev faults always **allow**. No hard-coded Rock `Gates.Risk`, no offline deny. |
+| (f) context filter | [#11](https://github.com/StephenSHorton/grok-build/pull/11) | **Smaller safe version.** `prune_conversation` stays sync and HTTP-free (`xai-chat-state` has no Jev client). After `build_request`, if `context_filter` is on, the same older tool results prune considers (skip last 3 user turns) may be replaced on the **request clone** with `[Tool result omitted — not relevant]`. Drop only on live keep=false (noul below 0.55). Errors keep the item. Query/snippet clipped to 400/800 chars. At most 4 Decide calls per request. Compaction input and grep `KeepSnippet` were **not** hooked (follow-up **f2**). |
+
+`docs/jev/README.md` is the short user-facing guide (key, `[jev]` fields, flags).
 
 Sources used (2026-10-04):
 
@@ -330,13 +347,17 @@ Resolved from Rock + public docs (do not re-litigate):
 - Agent boolean = wire `noul`.
 - Failure strings: `Jev call failed, question not answered` / `Jev returned no answer`.
 
-Still open for later slices (not blockers for (a)–(c)):
+Resolved in the slices that shipped:
 
-- Exact `ToolKind` for `ask_jev` (`Other` vs a new variant). `Other` is enough for (c); a new kind is only needed if prompt templates should say `${{ tools.by_kind.ask_jev }}`.
-- Whether `grok inspect` should print `jev: off` in (a) (changes inspect text) or wait until a user-facing slice.
-- First (f) insertion: per-turn `prune_conversation` (recommended) vs compact ladder vs grep `KeepSnippet`. Prune is what the next `Complete` sees; grep if a PR stays small.
-- TUI `◇ jev` marks: Rock slice (d). Not required for optional-tool usefulness; add only if the pager has a cheap tool-row summary.
-- New crate name `xai-grok-jev` vs a module under `xai-grok-tools`. Prefer a **separate crate** so the tools crate does not grow an HTTP client, and so the shell can depend on config+client without registering the tool.
+- `ToolKind` for `ask_jev` is `Other` (`is_read_only()` overridden). A dedicated kind is only needed if templates should say `${{ tools.by_kind.ask_jev }}`.
+- `grok inspect` does not print `jev: off` (would change no-key inspect text).
+- (f) did **not** run inside sync `prune_conversation` (chat-state has no HTTP). The shell filters the request clone after `build_request`, using the same older-tool-result age walk. Compaction / grep `KeepSnippet` are **f2**.
+- Crate name is `xai-grok-jev` (isolated client). Tools re-export settings/helpers; the client is constructed only when a key is present.
+
+Still open (not required for optional-tool usefulness):
+
+- TUI `◇ jev` marks (Rock slice (d)); add only if the pager has a cheap tool-row summary.
+- (f2) same `keep_snippet` on compaction input and/or grep hits.
 
 Could not find / did not need:
 
