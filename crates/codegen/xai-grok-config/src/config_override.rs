@@ -95,11 +95,13 @@ pub const CAMPAIGN_STRIP_KEYS: &[&str] = &[
     "model_providers",
     "auth",
     "grok_com_config",
+    "jev",
 ];
 
 /// Dotted paths the `GROK_CONFIG` / `GROK_CONFIG_PATH` overlay may set.
 /// No entry is a prefix of another: a top-level key is either a whole-subtree keep or deeper-only, never both.
 /// Fail-closed: anything not listed is dropped, so a newly added table stays out until it is allowlisted here.
+/// `[jev]` is intentionally omitted: overlays must not inject a Jev/TypeSafe API key.
 pub const OVERLAY_ALLOW_PATHS: &[&[&str]] = &[
     // Global model block (`default_reasoning_effort`, picker filters), not the per-model `[model.<id>]` block; and the soft `[features]` toggles
     &["models"],
@@ -518,6 +520,7 @@ mod tests {
         let patch = table(
             "[auth]\npreferred_method = \"api_key\"\n\
              [grok_com_config]\nforce_login_team_uuid = \"team-uuid\"\n\
+             [jev]\napi_key = \"sk-evil-jev\"\n\
              [models]\ndefault = \"m\"\n",
         );
         apply_patches(&mut cfg, std::iter::once(patch), CAMPAIGN_STRIP_KEYS);

@@ -743,6 +743,10 @@ pub struct Config {
     /// `[file_acceleration]` section: the accelerator route override, read by `session::file_acceleration::settings`.
     #[serde(default, skip_serializing)]
     pub file_acceleration: xai_grok_config_types::FileAccelerationConfig,
+    /// `[jev]` optional TypeSafe/Jev judge. Absent / no key ⇒ fully off. Not serialized so
+    /// `grok inspect` and persist snapshots stay unchanged on the no-key path.
+    #[serde(default, skip_serializing)]
+    pub jev: xai_grok_config_types::JevConfig,
     /// What `[features]` said in the merged layers.
     /// One tier of [`Config::feature`].
     #[serde(skip)]
@@ -1136,6 +1140,7 @@ impl Default for Config {
             auto_mode: AutoModeConfig::default(),
             prompt_suggestions: crate::util::config::PromptSuggestConfig::default(),
             file_acceleration: xai_grok_config_types::FileAccelerationConfig::default(),
+            jev: xai_grok_config_types::JevConfig::default(),
             feature_values: BTreeMap::new(),
             config_models: IndexMap::new(),
             config_warnings: Vec::new(),
@@ -1831,6 +1836,14 @@ impl Config {
             self.features.telemetry = Some(mode);
         }
         self.grok_com_config.pin_login_team();
+    }
+    /// `JEV_API_KEY` → `TYPESAFE_API_KEY` → `[jev].api_key`. Empty strings do not count.
+    /// Overlays cannot inject a key: `[jev]` is not on `OVERLAY_ALLOW_PATHS`.
+    pub fn jev_key(&self) -> Option<String> {
+        xai_grok_config_types::jev_key(self.jev.api_key.as_deref())
+    }
+    pub fn jev_enabled(&self) -> bool {
+        xai_grok_config_types::jev_enabled(self.jev.api_key.as_deref())
     }
     /// Whether product analytics may run. Every product analytics check calls this.
     pub fn product_analytics_enabled(&self, auth: Option<&xai_grok_login::GrokAuth>) -> bool {

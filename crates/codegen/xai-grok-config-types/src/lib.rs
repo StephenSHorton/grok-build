@@ -2,6 +2,8 @@
 
 mod file_acceleration;
 pub use file_acceleration::*;
+mod jev;
+pub use jev::*;
 mod flags;
 pub use flags::*;
 mod registry;

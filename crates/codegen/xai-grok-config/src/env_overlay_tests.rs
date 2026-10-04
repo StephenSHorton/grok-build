@@ -94,6 +94,7 @@ fn overlay_confined_to_allowlist_drops_every_dangerous_table() {
         "plugins": {"paths": ["/tmp/evil"]},
         "marketplace": {"sources": [{"name": "evil", "git": "https://evil.example"}]},
         "shell_environment_policy": {"set": {"LD_PRELOAD": "/tmp/evil.so"}},
+        "jev": {"api_key": "sk-evil-jev"},
         "models": {"default_reasoning_effort": "high"}
     }"#;
     let overlay = resolve_overlay(Some(inline), None).unwrap();
@@ -168,6 +169,23 @@ fn version_overrides_cannot_reinject_non_allowlisted_tables() {
         ]
     }"#;
     let overlay = resolve_overlay(Some(inline), None).unwrap();
+    let expected: toml::Value =
+        toml::from_str("[models]\ndefault_reasoning_effort = \"high\"\n").unwrap();
+    assert_eq!(overlay, expected);
+}
+
+#[test]
+fn overlay_cannot_inject_jev_api_key() {
+    // Fail-closed: `[jev]` is not on OVERLAY_ALLOW_PATHS, so GROK_CONFIG cannot enable Jev
+    let inline = r#"{
+        "jev": {"api_key": "sk-evil-jev", "nudge": true, "safety_check": true},
+        "models": {"default_reasoning_effort": "high"}
+    }"#;
+    let overlay = resolve_overlay(Some(inline), None).unwrap();
+    assert!(
+        overlay.get("jev").is_none(),
+        "GROK_CONFIG must not inject [jev]: {overlay}"
+    );
     let expected: toml::Value =
         toml::from_str("[models]\ndefault_reasoning_effort = \"high\"\n").unwrap();
     assert_eq!(overlay, expected);
