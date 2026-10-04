@@ -1855,6 +1855,11 @@ impl Config {
         )?;
         settings.nudge = self.jev.nudge;
         settings.nudge_every = self.jev.nudge_every;
+        settings.safety_check = self.jev.safety_check;
+        if let Some(risk_block) = self.jev.risk_block.filter(|value| *value > 0.0) {
+            settings.risk_block = risk_block;
+        }
+        settings.allow_destructive = self.jev.allow_destructive;
         Some(settings)
     }
     /// Whether product analytics may run. Every product analytics check calls this.

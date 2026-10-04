@@ -38,6 +38,13 @@ fn from_resolved_defaults_nudge_off() {
         !settings.nudge_active(),
         "a key alone must not enable the nudge"
     );
+    assert!(!settings.safety_check);
+    assert_eq!(settings.risk_block, crate::DEFAULT_RISK_BLOCK);
+    assert!(!settings.allow_destructive);
+    assert!(
+        !settings.safety_active(),
+        "a key alone must not enable the safety check"
+    );
 }
 
 #[test]
@@ -52,6 +59,18 @@ fn nudge_active_requires_key_flag_and_positive_every() {
     settings.nudge_every = 2;
     settings.nudge = false;
     assert!(!settings.nudge_active());
+}
+
+#[test]
+fn safety_active_requires_key_and_flag() {
+    let mut settings = Settings::from_resolved("k", None, None).expect("key");
+    assert!(!settings.safety_active());
+    settings.safety_check = true;
+    assert!(settings.safety_active());
+    settings.risk_block = 0.0;
+    assert_eq!(settings.risk_block_or_default(), crate::DEFAULT_RISK_BLOCK);
+    settings.risk_block = 0.9;
+    assert_eq!(settings.risk_block_or_default(), 0.9);
 }
 
 #[test]

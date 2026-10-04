@@ -416,6 +416,45 @@ fn jev_settings_copies_nudge_flags_when_key_present() {
 }
 
 #[test]
+#[serial]
+fn file_safety_true_without_key_does_not_enable_settings() {
+    let _env = jev_env_cleared();
+    let raw: toml::Value = toml::from_str("[jev]\nsafety_check = true\n").unwrap();
+    let cfg = Config::new_from_toml_cfg(&raw).expect("config should parse");
+    assert!(cfg.jev.safety_check);
+    assert!(!cfg.jev_enabled());
+    assert_eq!(cfg.jev_settings(), None);
+}
+
+#[test]
+#[serial]
+fn jev_settings_safety_stays_off_when_key_present_and_flag_unset() {
+    let _env = jev_env_cleared();
+    let raw: toml::Value = toml::from_str("[jev]\napi_key = \"file-key\"\n").unwrap();
+    let cfg = Config::new_from_toml_cfg(&raw).expect("config should parse");
+    let settings = cfg.jev_settings().expect("key");
+    assert!(!settings.safety_check);
+    assert!(!settings.safety_active());
+    assert!(!settings.allow_destructive);
+}
+
+#[test]
+#[serial]
+fn jev_settings_copies_safety_flags_when_key_present() {
+    let _env = jev_env_cleared();
+    let raw: toml::Value = toml::from_str(
+        "[jev]\napi_key = \"file-key\"\nsafety_check = true\nrisk_block = 0.9\nallow_destructive = true\n",
+    )
+    .unwrap();
+    let cfg = Config::new_from_toml_cfg(&raw).expect("config should parse");
+    let settings = cfg.jev_settings().expect("key");
+    assert!(settings.safety_check);
+    assert_eq!(settings.risk_block, 0.9);
+    assert!(settings.allow_destructive);
+    assert!(settings.safety_active());
+}
+
+#[test]
 fn parses_toolset_bash_float_timeout() {
     let raw_config: toml::Value = toml::from_str(
         r#"

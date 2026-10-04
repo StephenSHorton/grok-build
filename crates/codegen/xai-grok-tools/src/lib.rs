@@ -44,3 +44,4 @@ pub use attribution::{
 };
 pub use implementations::grok_build::is_task_tool_id;
 pub use implementations::{SEARCH_TOOL_NAME, USE_TOOL_NAME};
+pub use permission_access::jev_safety_applies;

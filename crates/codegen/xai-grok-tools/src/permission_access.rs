@@ -116,6 +116,15 @@ fn access_kind_from_dynamic(value: &serde_json::Value) -> AccessKind {
     }
     AccessKind::Read(None)
 }
+
+/// Optional Jev safety check applies to bash / edit (including write) / MCP, plus apply_patch.
+pub fn jev_safety_applies(access: &AccessKind) -> bool {
+    matches!(
+        access,
+        AccessKind::Bash(_) | AccessKind::Edit(_) | AccessKind::MCPTool { .. }
+    ) || matches!(access, AccessKind::Tool(name) if name == "apply_patch")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -316,6 +325,10 @@ mod tests {
             matches!(access, AccessKind::Edit(ref p) if p == "/tmp/secret.txt"),
             "Write should produce AccessKind::Edit with the file path, got {access:?}"
         );
+        assert!(
+            jev_safety_applies(&access),
+            "write is AccessKind::Edit and must be eligible for the optional safety check"
+        );
     }
     #[test]
     fn write_scoped_and_dynamic_inputs_map_to_edit_not_read() {
@@ -418,5 +431,50 @@ mod tests {
         ]));
         assert!(allow_read.evaluate(&task).is_none());
         assert!(allow_read.evaluate(&edit).is_none());
+    }
+
+    #[test]
+    fn jev_safety_applies_to_mutators_not_reads() {
+        use crate::implementations::grok_build::ask_jev::{AskJevInput, AskJevQuestion};
+        use crate::implementations::grok_build::bash::BashToolInput;
+        use crate::implementations::use_tool::{InlineMcpInvocation, UseToolInput};
+        use crate::types::ToolInput;
+        assert!(jev_safety_applies(&AccessKind::from(&ToolInput::Bash(
+            BashToolInput {
+                command: "rm -rf /tmp/x".into(),
+                timeout: None,
+                description: "rm".into(),
+                is_background: false,
+                block_until_ms: None,
+            }
+        ))));
+        assert!(jev_safety_applies(&AccessKind::Edit("lib.rs".into())));
+        assert!(jev_safety_applies(&AccessKind::MCPTool {
+            name: "linear__save_issue".into(),
+            input: serde_json::json!({}),
+        }));
+        assert!(jev_safety_applies(&AccessKind::from(&ToolInput::UseTool(
+            UseToolInput::Inline(InlineMcpInvocation {
+                tool_name: "linear__save_issue".into(),
+                tool_input: serde_json::json!({}),
+            })
+        ))));
+        assert!(jev_safety_applies(&AccessKind::Tool("apply_patch".into())));
+        assert!(!jev_safety_applies(&AccessKind::from(&ToolInput::AskJev(
+            AskJevInput {
+                state: serde_json::json!({"k": 1}),
+                questions: vec![AskJevQuestion {
+                    name: "ok".into(),
+                    question: "yes?".into(),
+                    mode: "boolean".into(),
+                    options: None,
+                    levels: None,
+                }],
+            }
+        ))));
+        assert!(!jev_safety_applies(&AccessKind::Read(Some(
+            "lib.rs".into()
+        ))));
+        assert!(!jev_safety_applies(&AccessKind::WebSearch("q".into())));
     }
 }
