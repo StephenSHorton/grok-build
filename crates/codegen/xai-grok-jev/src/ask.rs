@@ -7,6 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 
 use crate::client::Client;
+use crate::metrics::{DecideRecord, DecideSource};
 use crate::types::{Usage, choice_q, decode_choice, decode_noul, decode_score, noul_q, score_q};
 
 /// Agent-facing boolean (wire `noul`).
@@ -163,14 +164,27 @@ fn wire_question(q: &Query) -> crate::types::Question {
 /// Run questions in one Decide call. A failed call sets `error` and leaves every
 /// value empty — never a fabricated answer.
 pub async fn ask<S: Serialize>(client: &Client, state: &S, questions: &[Query]) -> AskResult {
+    ask_recorded(client, state, questions).await.0
+}
+
+/// [`ask`] plus a Decide record (sizes, latency, usage). `AskResult` JSON is unchanged.
+pub async fn ask_recorded<S: Serialize>(
+    client: &Client,
+    state: &S,
+    questions: &[Query],
+) -> (AskResult, DecideRecord) {
     let mut qs = BTreeMap::new();
     for q in questions {
         qs.insert(q.name.clone(), wire_question(q));
     }
-    match client.decide(state, &qs).await {
+    let (res, mut record) = client.decide_timed(state, &qs, DecideSource::AskJev).await;
+    record.modes = questions.iter().map(Query::agent_mode).collect();
+    record.question_count = questions.len() as u32;
+    let result = match res {
         Ok(res) => decode_live(questions, res),
         Err(err) => ask_failed(questions, &err.to_string()),
-    }
+    };
+    (result, record)
 }
 
 /// Same payload as a missing client (Rock: "jev client is not wired").

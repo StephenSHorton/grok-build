@@ -242,12 +242,24 @@ pub(super) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
     BuiltinCommand {
         name: "jev-setup",
         description: "Enable Jev, set or remove the key, and toggle optional extras",
-        argument_hint: Some("status | set [--force] [key] | off | nudge on|off | safety on|off | filter on|off | apply"),
+        argument_hint: Some(
+            "status | set [--force] [key] | off | nudge on|off | safety on|off | filter on|off | apply | stats",
+        ),
         aliases: &[],
         model_authored_eligibility: ModelAuthoredEligibility::Denied,
         gate: BuiltinGate::AlwaysOn,
         workflow_projection: WorkflowProjection::None,
         resolve: |args| BuiltinAction::JevSetup(crate::util::config::parse_args(args)),
+    },
+    BuiltinCommand {
+        name: "jev-stats",
+        description: "Show Jev Decide latency, tokens, failures, and filter/safety outcomes",
+        argument_hint: None,
+        aliases: &[],
+        model_authored_eligibility: ModelAuthoredEligibility::Denied,
+        gate: BuiltinGate::AlwaysOn,
+        workflow_projection: WorkflowProjection::None,
+        resolve: |_args| BuiltinAction::JevStats,
     },
     BuiltinCommand {
         name: "feedback",
@@ -496,6 +508,7 @@ pub const PAGER_COMMAND_KEYS: &[&str] = &[
     "import-claude",
     "jump",
     "jev-setup",
+    "jev-stats",
     "login",
     "logout",
     "log",
@@ -1274,6 +1287,7 @@ pub(super) enum BuiltinAction {
         input: String,
     },
     JevSetup(Result<crate::util::config::JevSetupRequest, String>),
+    JevStats,
 }
 impl BuiltinAction {
     pub(crate) fn command_name(&self) -> &'static str {
@@ -1308,6 +1322,7 @@ impl BuiltinAction {
             BuiltinAction::WorkflowManage { .. } => "workflow",
             BuiltinAction::WorkflowLaunch { .. } => "workflow",
             BuiltinAction::JevSetup(_) => "jev-setup",
+            BuiltinAction::JevStats => "jev-stats",
         }
     }
     pub(crate) fn args_provided(&self) -> bool {
@@ -1345,7 +1360,9 @@ impl BuiltinAction {
                 request,
                 Ok(crate::util::config::JevSetupRequest::Status)
                     | Ok(crate::util::config::JevSetupRequest::Help)
+                    | Ok(crate::util::config::JevSetupRequest::Stats)
             ),
+            BuiltinAction::JevStats => false,
         }
     }
 }

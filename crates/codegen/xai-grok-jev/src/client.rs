@@ -35,6 +35,19 @@ pub enum Error {
     Decode(#[from] serde_json::Error),
 }
 
+impl Error {
+    pub fn kind(&self) -> crate::DecideErrorKind {
+        match self {
+            Self::MissingKey => crate::DecideErrorKind::MissingKey,
+            Self::Http { .. } => crate::DecideErrorKind::Http,
+            Self::ResponseTooLarge => crate::DecideErrorKind::ResponseTooLarge,
+            Self::Request(err) if err.is_timeout() => crate::DecideErrorKind::Timeout,
+            Self::Request(_) => crate::DecideErrorKind::Request,
+            Self::Decode(_) => crate::DecideErrorKind::Decode,
+        }
+    }
+}
+
 /// Settings used to construct a [`Client`]. Empty / whitespace keys are disabled.
 /// Feature flags stay off unless the caller sets them; a key alone does not enable extras.
 #[derive(Debug, Clone, PartialEq)]
@@ -201,6 +214,44 @@ impl Client {
             });
         }
         Ok(serde_json::from_slice(&raw)?)
+    }
+
+    /// [`Self::decide`] plus a size/latency record. Never stores `state` contents.
+    pub async fn decide_timed<S: Serialize>(
+        &self,
+        state: &S,
+        questions: &BTreeMap<String, Question>,
+        source: crate::DecideSource,
+    ) -> (Result<Response, Error>, crate::DecideRecord) {
+        let started = std::time::Instant::now();
+        let state_bytes = crate::state_byte_len(state);
+        let modes: Vec<String> = questions.values().map(|q| q.kind.clone()).collect();
+        let question_count = questions.len() as u32;
+        let result = self.decide(state, questions).await;
+        let latency_ms = started.elapsed().as_millis() as u64;
+        let record = match &result {
+            Ok(res) => crate::DecideRecord::from_parts(
+                source,
+                latency_ms,
+                true,
+                None,
+                question_count,
+                modes,
+                res.usage.as_ref(),
+                state_bytes,
+            ),
+            Err(err) => crate::DecideRecord::from_parts(
+                source,
+                latency_ms,
+                false,
+                Some(err.kind()),
+                question_count,
+                modes,
+                None,
+                state_bytes,
+            ),
+        };
+        (result, record)
     }
 }
 

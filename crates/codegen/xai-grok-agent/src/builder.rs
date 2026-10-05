@@ -1211,6 +1211,7 @@ impl AgentBuilder {
                 Ok(client) => tool_bridge.update_resource(client).await,
                 Err(err) => tracing::warn!("failed to construct Jev client: {err}"),
             }
+            tool_bridge.update_resource(jev_metrics_resource()).await;
             if settings.nudge_active() {
                 tool_bridge
                     .update_resource(xai_grok_tools::reminders::JevNudgeConfig {
@@ -1458,6 +1459,14 @@ fn resolve_shell_for_prompt() -> String {
             .to_string()
     }
 }
+
+fn jev_metrics_resource() -> xai_grok_tools::implementations::grok_build::JevMetrics {
+    let home = xai_dirs::resolve_grok_home().unwrap_or_else(|| PathBuf::from("."));
+    xai_grok_tools::implementations::grok_build::JevMetrics::with_persist(
+        home.join("jev_stats.jsonl"),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3492,6 +3501,12 @@ mod tests {
                 .is_none(),
             "no-key path must not insert JevNudgeConfig"
         );
+        assert!(
+            resources
+                .get::<xai_grok_tools::implementations::grok_build::JevMetrics>()
+                .is_none(),
+            "no-key path must not insert JevMetrics"
+        );
     }
 
     #[tokio::test]
@@ -3521,6 +3536,12 @@ mod tests {
                 .get::<xai_grok_tools::reminders::JevNudgeConfig>()
                 .is_none(),
             "key + nudge off must not insert JevNudgeConfig"
+        );
+        assert!(
+            resources
+                .get::<xai_grok_tools::implementations::grok_build::JevMetrics>()
+                .is_some(),
+            "key-on path inserts JevMetrics (no file until the first Decide)"
         );
     }
 

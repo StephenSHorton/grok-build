@@ -70,6 +70,28 @@ async fn missing_client_is_allow() {
 }
 
 #[tokio::test]
+async fn live_noul_above_threshold_records_deny() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(noul_body(0.95)))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let client = client_on(&server).await;
+    let (verdict, record) =
+        risk_check_recorded(&client, "bash", r#"{"command":"rm"}"#, 0.72, false).await;
+    assert!(verdict.is_deny());
+    assert_eq!(record.source, crate::DecideSource::Safety);
+    assert_eq!(
+        record.safety,
+        Some(crate::SafetyOutcome::Denied { noul: 0.95 })
+    );
+    assert!(record.ok);
+}
+
+#[tokio::test]
 async fn live_noul_above_threshold_denies() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))

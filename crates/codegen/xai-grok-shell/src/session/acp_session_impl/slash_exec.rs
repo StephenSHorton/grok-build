@@ -921,6 +921,11 @@ impl SessionActor {
                 self.send_host_turn_slash_command_output(&msg).await;
                 ok_end_turn(0, None)
             }
+            BuiltinAction::JevStats => {
+                let msg = self.execute_jev_stats().await;
+                self.send_host_turn_slash_command_output(&msg).await;
+                ok_end_turn(0, None)
+            }
         }
     }
 

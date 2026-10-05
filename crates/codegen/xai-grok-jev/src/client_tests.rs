@@ -122,6 +122,7 @@ async fn missing_key_is_error_and_sends_no_http() {
     blank.base_url = Some(server.uri());
     let err = blank.decide(&json!({}), &questions()).await.unwrap_err();
     assert!(matches!(err, Error::MissingKey));
+    assert_eq!(err.kind(), crate::DecideErrorKind::MissingKey);
 }
 
 #[tokio::test]
@@ -164,6 +165,38 @@ async fn posts_bearer_and_json_body() {
 }
 
 #[tokio::test]
+async fn decide_timed_records_usage_and_sizes() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "model": "jev-1.x",
+            "answers": {
+                "ok": {"type": "noul", "noul": 0.91}
+            },
+            "usage": {"input_tokens": 3, "output_tokens": 1}
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let mut client = Client::new("test-key").expect("client");
+    client.base_url = Some(server.uri());
+    let (timed, rec) = client
+        .decide_timed(
+            &json!({"file": "main.rs"}),
+            &questions(),
+            crate::DecideSource::AskJev,
+        )
+        .await;
+    assert!(timed.is_ok());
+    assert!(rec.ok);
+    assert_eq!(rec.source, crate::DecideSource::AskJev);
+    assert_eq!(rec.input_tokens, Some(3));
+    assert!(rec.state_bytes > 0);
+    assert!(rec.error_kind.is_none());
+}
+
+#[tokio::test]
 async fn status_300_plus_is_error() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
@@ -180,6 +213,8 @@ async fn status_300_plus_is_error() {
         }
         other => panic!("expected http error, got {other:?}"),
     }
+    let err = client.decide(&json!({}), &questions()).await.unwrap_err();
+    assert_eq!(err.kind(), crate::DecideErrorKind::Http);
 }
 
 #[tokio::test]

@@ -21,7 +21,9 @@ All planned slices landed on this fork’s `main`. Feature flags stay **off** ev
 | (e) safety check | [#10](https://github.com/StephenSHorton/grok-build/pull/10) | After permission allow (plan-mode already not deny), optional noul “is this destructive?” for bash / edit (including write) / MCP / `apply_patch`. Deny only on **live** noul ≥ `risk_block` (default 0.72) when `allow_destructive` is false. Jev faults always **allow**. No hard-coded Rock `Gates.Risk`, no offline deny. |
 | (f) context filter | [#11](https://github.com/StephenSHorton/grok-build/pull/11) | **Smaller safe version.** `prune_conversation` stays sync and HTTP-free (`xai-chat-state` has no Jev client). After `build_request`, if `context_filter` is on, the same older tool results prune considers (skip last 3 user turns) may be replaced on the **request clone** with `[Tool result omitted — not relevant]`. Drop only on live keep=false (noul below 0.55). Errors keep the item. Query/snippet clipped to 400/800 chars. At most 4 Decide calls per request. Compaction input and grep `KeepSnippet` were **not** hooked (follow-up **f2**). |
 
-`docs/jev/README.md` is the short user-facing guide (key, `[jev]` fields, flags).
+`docs/jev/README.md` is the short user-facing guide (key, `[jev]` fields, flags, `/jev-stats`).
+
+Follow-up: `/jev-stats` records every Decide by source (latency, error kind, tokens, safety/filter outcome, nudge follow-through) and optionally appends a capped `$GROK_HOME/jev_stats.jsonl`. No files when Jev is off.
 
 Sources used (2026-10-04):
 

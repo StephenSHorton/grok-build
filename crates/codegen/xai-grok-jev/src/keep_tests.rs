@@ -73,6 +73,26 @@ async fn empty_snippet_keeps_without_http() {
 }
 
 #[tokio::test]
+async fn live_keep_false_records_drop_and_chars() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(noul_body(0.10)))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let client = client_on(&server).await;
+    let snippet = "old tool output that is stale";
+    let (keep, record) = keep_snippet_recorded(&client, "q", snippet, DEFAULT_MIN_CONFIDENCE).await;
+    assert!(!keep);
+    let record = record.expect("decide ran");
+    assert_eq!(record.source, crate::DecideSource::Filter);
+    assert_eq!(record.filter, Some(crate::FilterOutcome::Dropped));
+    assert_eq!(record.snippet_chars, Some(snippet.chars().count()));
+    assert!(record.ok);
+}
+
+#[tokio::test]
 async fn live_keep_false_drops() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))

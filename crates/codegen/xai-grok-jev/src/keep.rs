@@ -6,6 +6,7 @@
 use std::collections::BTreeMap;
 
 use crate::client::{Client, Settings};
+use crate::metrics::{DecideRecord, DecideSource, FilterOutcome};
 use crate::types::{Question, decode_noul, noul_q};
 
 /// Rock default `MinConfidence`.
@@ -44,9 +45,22 @@ pub async fn keep_snippet(
     snippet: &str,
     min_confidence: f64,
 ) -> bool {
+    keep_snippet_recorded(client, query, snippet, min_confidence)
+        .await
+        .0
+}
+
+/// [`keep_snippet`] plus a record when a Decide ran. Empty snippets return `(true, None)`.
+pub async fn keep_snippet_recorded(
+    client: &Client,
+    query: &str,
+    snippet: &str,
+    min_confidence: f64,
+) -> (bool, Option<DecideRecord>) {
     if snippet.trim().is_empty() {
-        return true;
+        return (true, None);
     }
+    let snippet_chars = snippet.chars().count();
     let threshold = if min_confidence > 0.0 {
         min_confidence
     } else {
@@ -58,17 +72,27 @@ pub async fn keep_snippet(
         "query": clip_text(query, QUERY_CLIP_CHARS),
         "snippet": clip_text(snippet, SNIPPET_CLIP_CHARS),
     });
-    let Ok(response) = client.decide(&state, &questions).await else {
-        return true;
+    let (response, mut record) = client
+        .decide_timed(&state, &questions, DecideSource::Filter)
+        .await;
+    let keep = match response {
+        Err(_) => true,
+        Ok(response) => match response
+            .answers
+            .get(KEEP_ANSWER_NAME)
+            .and_then(|raw| decode_noul(raw).ok())
+        {
+            None => true,
+            Some(noul) => noul.noul >= threshold,
+        },
     };
-    let Some(raw) = response.answers.get(KEEP_ANSWER_NAME) else {
-        return true;
+    let outcome = if keep {
+        FilterOutcome::Kept
+    } else {
+        FilterOutcome::Dropped
     };
-    let Ok(noul) = decode_noul(raw) else {
-        return true;
-    };
-    // Live keep=false only: drop when noul is below the confidence floor.
-    noul.noul >= threshold
+    record = record.with_filter(outcome, snippet_chars);
+    (keep, Some(record))
 }
 
 /// No-op keep when the flag is off, no key, or the client is missing.
@@ -78,13 +102,25 @@ pub async fn maybe_keep_snippet(
     query: &str,
     snippet: &str,
 ) -> bool {
+    maybe_keep_snippet_recorded(settings, client, query, snippet)
+        .await
+        .0
+}
+
+/// [`maybe_keep_snippet`] plus a record when a Decide actually ran.
+pub async fn maybe_keep_snippet_recorded(
+    settings: Option<&Settings>,
+    client: Option<&Client>,
+    query: &str,
+    snippet: &str,
+) -> (bool, Option<DecideRecord>) {
     if !settings.is_some_and(|s| s.context_filter_active()) {
-        return true;
+        return (true, None);
     }
     let Some(client) = client else {
-        return true;
+        return (true, None);
     };
-    keep_snippet(client, query, snippet, DEFAULT_MIN_CONFIDENCE).await
+    keep_snippet_recorded(client, query, snippet, DEFAULT_MIN_CONFIDENCE).await
 }
 
 #[cfg(test)]

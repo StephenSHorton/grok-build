@@ -2311,9 +2311,14 @@ pub(crate) fn execute(
         Effect::JevSetupValidateAndSave { agent_id, key, force } => {
             tasks.spawn(async move {
                 let key = key.0;
-                match xai_grok_shell::util::config::validate_key(&key).await {
+                let (outcome, record) =
+                    xai_grok_shell::util::config::validate_key_recorded(&key).await;
+                match outcome {
                     Ok(()) => {}
                     Err(err) if force => {
+                        if let Some(record) = record.as_ref() {
+                            xai_grok_shell::util::config::persist_jev_decide_record(record);
+                        }
                         if let Err(save_err) =
                             xai_grok_shell::util::config::save_user_api_key(&key).await
                         {
@@ -2340,6 +2345,9 @@ pub(crate) fn execute(
                             apply: false,
                         };
                     }
+                }
+                if let Some(record) = record.as_ref() {
+                    xai_grok_shell::util::config::persist_jev_decide_record(record);
                 }
                 match xai_grok_shell::util::config::save_user_api_key(&key).await {
                     Ok(()) => TaskResult::JevSetupComplete {
