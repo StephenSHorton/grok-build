@@ -3001,6 +3001,7 @@ impl SessionActor {
             );
             let mut request = request;
             self.apply_jev_context_filter(&mut request.items).await;
+            self.apply_jev_route(&mut request, loop_index == 1).await;
             request.x_grok_session_id = Some(self.session_info.id.to_string());
             request.x_grok_turn_idx =
                 Some(self.chat_state_handle.get_prompt_index().await.to_string());

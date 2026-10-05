@@ -155,29 +155,32 @@ pub struct JevPromptInfo {
     /// Fail-open omit of older tool results on the next request.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub context_filter: bool,
+    /// Fail-open first-sample tool omit on a high-confidence trivial prompt.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub route: bool,
 }
 impl JevPromptInfo {
     /// Concise `<jev>` system-prompt section. Callers append this only when Jev is on.
     pub fn render_section(&self) -> String {
-        let extras = match (self.nudge, self.safety_check, self.context_filter) {
-            (false, false, false) => {
-                "Extras off: nudge, safety_check, and context_filter.".to_string()
+        let extras = {
+            let mut parts = Vec::new();
+            if self.nudge {
+                parts.push("nudge: a reminder may suggest ask_jev after successful edits/shells");
             }
-            (nudge, safety, filter) => {
-                let mut parts = Vec::new();
-                if nudge {
-                    parts.push(
-                        "nudge: a reminder may suggest ask_jev after successful edits/shells",
-                    );
-                }
-                if safety {
-                    parts.push("safety_check: a deny means Jev judged the bash/edit/write/MCP/apply_patch call destructive");
-                }
-                if filter {
-                    parts.push(
-                        "context_filter: older tool results may be omitted from the next request",
-                    );
-                }
+            if self.safety_check {
+                parts.push("safety_check: a deny means Jev judged the bash/edit/write/MCP/apply_patch call destructive");
+            }
+            if self.context_filter {
+                parts.push("context_filter: older tool results may be omitted from the next request");
+            }
+            if self.route {
+                parts.push(
+                    "route: the first sample may omit tools if Jev is sure the prompt is trivial",
+                );
+            }
+            if parts.is_empty() {
+                "Extras off: nudge, safety_check, context_filter, and route.".to_string()
+            } else {
                 format!("On: {}.", parts.join("; "))
             }
         };
@@ -1181,7 +1184,7 @@ Put facts/snippets in `state` (Jev cannot read files). Batch named boolean/choic
 - boolean: noul float (aliases noul/yes/yesno); no yes/no threshold.
 - choice: requires `options` (label → meaning).
 - score: requires `levels` (2–10 descriptions).
-Extras off: nudge, safety_check, and context_filter.
+Extras off: nudge, safety_check, context_filter, and route.
 </jev>";
 
     #[test]
@@ -1262,11 +1265,13 @@ Extras off: nudge, safety_check, and context_filter.
             nudge: true,
             safety_check: true,
             context_filter: true,
+            route: true,
         }
         .render_section();
         assert!(all_on.contains("nudge: a reminder may suggest ask_jev"));
         assert!(all_on.contains("safety_check: a deny means Jev judged"));
         assert!(all_on.contains("context_filter: older tool results may be omitted"));
+        assert!(all_on.contains("route: the first sample may omit tools"));
         assert!(!all_on.contains("Extras off:"));
     }
 

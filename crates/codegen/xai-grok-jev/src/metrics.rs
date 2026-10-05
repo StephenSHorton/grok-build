@@ -32,6 +32,7 @@ pub enum DecideSource {
     Safety,
     Filter,
     Setup,
+    Route,
 }
 
 impl DecideSource {
@@ -41,6 +42,7 @@ impl DecideSource {
             Self::Safety => "safety",
             Self::Filter => "filter",
             Self::Setup => "setup",
+            Self::Route => "route",
         }
     }
 }
@@ -401,6 +403,7 @@ pub fn format_stats_report(
             DecideSource::Safety,
             DecideSource::Filter,
             DecideSource::Setup,
+            DecideSource::Route,
         ] {
             if let Some(stats) = session.by_source.get(&source) {
                 lines.push(format_source_line(source, stats));

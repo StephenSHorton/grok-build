@@ -41,6 +41,7 @@ impl SessionActor {
                             JevFlag::Nudge => settings.nudge = on,
                             JevFlag::SafetyCheck => settings.safety_check = on,
                             JevFlag::ContextFilter => settings.context_filter = on,
+                            JevFlag::Route => settings.route = on,
                         }
                     }
                     let apply = self.apply_jev_settings(settings).await;
@@ -200,6 +201,7 @@ impl SessionActor {
                     nudge: settings.nudge_active(),
                     safety_check: settings.safety_active(),
                     context_filter: settings.context_filter_active(),
+                    route: settings.route_active(),
                 });
         let bridge = self.agent.borrow().tool_bridge().clone();
         if let Err(err) = self.sync_ask_jev_tool(&bridge, enabled) {

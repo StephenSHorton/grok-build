@@ -47,6 +47,11 @@ fn from_resolved_defaults_nudge_on_other_extras_off() {
         !settings.context_filter_active(),
         "a key alone must not enable the context filter"
     );
+    assert!(settings.route);
+    assert!(
+        settings.route_active(),
+        "a key alone enables trivial-request routing"
+    );
 }
 
 #[test]
@@ -80,6 +85,14 @@ fn context_filter_active_requires_key_and_flag() {
     assert!(!settings.context_filter_active());
     settings.context_filter = true;
     assert!(settings.context_filter_active());
+}
+
+#[test]
+fn route_active_requires_key_and_flag() {
+    let mut settings = Settings::from_resolved("k", None, None).expect("key");
+    assert!(settings.route_active());
+    settings.route = false;
+    assert!(!settings.route_active());
 }
 
 #[test]

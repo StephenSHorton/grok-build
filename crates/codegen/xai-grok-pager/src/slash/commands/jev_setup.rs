@@ -17,7 +17,7 @@ impl SlashCommand for JevSetupCommand {
     slash_meta! {
         name: "jev-setup",
         description: "Enable Jev, set or remove the key, and toggle extras",
-        usage: "/jev-setup [status|set [--force]|off|nudge on|off|safety on|off|filter on|off|apply|stats]",
+        usage: "/jev-setup [status|set [--force]|off|nudge on|off|safety on|off|filter on|off|route on|off|apply|stats]",
         takes_args: true,
     }
 
@@ -36,6 +36,11 @@ impl SlashCommand for JevSetupCommand {
             arg("safety off", "Turn the safety check off"),
             arg("filter on", "Omit older tool results Jev says are stale"),
             arg("filter off", "Turn the context filter off"),
+            arg(
+                "route on",
+                "First sample may omit tools on a trivial prompt (default on with a key)",
+            ),
+            arg("route off", "Always use the full agent"),
             arg("apply", "Turn Jev on in this session if idle"),
             arg("stats", "Decide latency, tokens, and outcomes"),
             arg("help", "Show usage"),
@@ -159,6 +164,10 @@ mod tests {
         assert!(matches!(
             run("nudge on"),
             CommandResult::QueueCommand(cmd) if cmd == "/jev-setup nudge on"
+        ));
+        assert!(matches!(
+            run("route off"),
+            CommandResult::QueueCommand(cmd) if cmd == "/jev-setup route off"
         ));
         assert!(matches!(
             run("apply"),

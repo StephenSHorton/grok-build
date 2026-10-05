@@ -19,7 +19,11 @@ fn default_nudge() -> bool {
     true
 }
 
-/// `[jev]` in config.toml. Nudge defaults on; `safety_check` and `context_filter` stay off.
+fn default_route() -> bool {
+    true
+}
+
+/// `[jev]` in config.toml. Nudge and route default on; `safety_check` and `context_filter` stay off.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct JevConfig {
@@ -44,6 +48,9 @@ pub struct JevConfig {
     /// Optional fail-open context filter. Default off.
     #[serde(default)]
     pub context_filter: bool,
+    /// Optional fail-open trivial-request router before the first sample. Default on with a key.
+    #[serde(default = "default_route")]
+    pub route: bool,
     /// Noul threshold for an optional safety deny. `None` means the later-slice default (0.72).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub risk_block: Option<f64>,
@@ -62,6 +69,7 @@ impl Default for JevConfig {
             nudge_every: default_nudge_every(),
             safety_check: false,
             context_filter: false,
+            route: true,
             risk_block: None,
             allow_destructive: false,
         }

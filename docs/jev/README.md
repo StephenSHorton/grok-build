@@ -1,6 +1,6 @@
 # Optional Jev on this fork
 
-Jev is a typed judge (boolean / choice / score), not an LLM. On this fork it is **strictly optional**. A key enables the `ask_jev` tool and turns the self-validation **nudge** on. `safety_check` and `context_filter` stay off until you turn them on.
+Jev is a typed judge (boolean / choice / score), not an LLM. On this fork it is **strictly optional**. A key enables the `ask_jev` tool and turns the self-validation **nudge** and trivial-request **route** on. `safety_check` and `context_filter` stay off until you turn them on.
 
 No key ⇒ no tool, no HTTP, no errors. Behavior matches this fork without Jev.
 
@@ -12,14 +12,14 @@ Enable Jev from the TUI (or ACP/headless) without editing the file by hand.
 2. `/jev-setup set` opens a masked prompt in the TUI. Do not paste the key on the slash line (it can land in scrollback). ACP/headless: `/jev-setup set [--force] <key>` (never echoed).
 3. A tiny live Decide ping (`Is 1 less than 2?`) validates the key. Failures are shown; nothing is saved unless you re-run with `--force`.
 4. The key is written to `[jev].api_key` in `~/.grok/config.toml` (or `$GROK_HOME`) with comments and sibling tables preserved.
-5. Then toggle extras: `/jev-setup nudge on|off` (default **on** with a key), `safety on|off` (default off), `filter on|off` (default off). One-line explanations are in the status text.
+5. Then toggle extras: `/jev-setup nudge on|off` (default **on** with a key), `route on|off` (default **on** with a key), `safety on|off` (default off), `filter on|off` (default off). One-line explanations are in the status text.
 6. `/jev-setup off` removes the file key. If `JEV_API_KEY` / `TYPESAFE_API_KEY` is set, the UI says so — env still wins, so Jev stays on until you unset the env var.
 7. If the session is idle, Jev turns on immediately (`ask_jev` registered, `<jev>` prompt section added). If a turn is running, run `/jev-setup apply` when idle or start a new session.
 8. `/jev-stats` (or `/jev-setup stats`) shows this session’s Decide totals plus all-time totals from a small local log.
 
 ## `/jev-stats`
 
-When Jev is on, every Decide is recorded by source (`ask_jev`, safety check, context filter, `/jev-setup` validation):
+When Jev is on, every Decide is recorded by source (`ask_jev`, safety check, context filter, `/jev-setup` validation, route):
 
 - latency, success/failure (error kind only — no response bodies)
 - question count and modes
@@ -54,13 +54,14 @@ api_key = ""
 # base_url = "https://jevtypesafeai.com/api/v1/decide"
 # model = "jev-latest"
 
-# Nudge defaults on when a key is present. Safety/filter stay off.
+# Nudge and route default on when a key is present. Safety/filter stay off.
 nudge = true
 nudge_every = 2          # every N successful edits/shells; <= 0 disables
 safety_check = false
 risk_block = 0.72        # live noul at/above this may deny
 allow_destructive = false
 context_filter = false
+route = true             # first sample may omit tools on a trivial prompt
 ```
 
 ## What each flag does
@@ -71,6 +72,7 @@ context_filter = false
 | `nudge` | **on** (with a key) | After a successful edit/write or allowed shell, a `<system-reminder>` may suggest `ask_jev`. Text only — **no extra Jev call**. Rate-limited by `nudge_every` (default every 2nd successful mutate). Set `nudge = false` to turn it off. |
 | `safety_check` | off | After the existing permission layer **allows** a bash/edit/write/MCP/`apply_patch` call, ask Jev noul “is this destructive or hard to undo?”. Deny only on a **live** noul ≥ `risk_block` when `allow_destructive` is false. Timeouts, HTTP errors, and missing answers **allow** (fail-open). There is no hard-coded deny and no offline policy. |
 | `context_filter` | off | On the **next completion request** (not the session log), older tool results past the last 3 user turns may be omitted if live Jev says they no longer help (noul below 0.55). Errors keep the item. At most four Jev calls per request. Compaction and grep hits are not filtered yet. |
+| `route` | **on** (with a key) | Before the **first sample** of a human turn, ask Jev whether the prompt is trivial. Only a live `no_tools` choice **and** noul ≥ 0.80 omits tools for that sample (`tool_choice = none`). Images, empty/long prompts, subagents, timeouts, HTTP errors, and missing answers stay **full agent** (fail-open). Does not run a tool itself. Set `route = false` to turn it off. |
 
 Yolo / always-approve does not skip an explicit Jev safety deny. A down Jev cannot freeze the session: faults fail open.
 
