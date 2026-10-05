@@ -1846,7 +1846,7 @@ impl Config {
         xai_grok_config_types::jev_enabled(self.jev.api_key.as_deref())
     }
     /// Settings for `ask_jev` when [`Self::jev_enabled`] is true. `None` on the no-key path.
-    /// Feature flags are copied from `[jev]` but stay off unless the file/user set them.
+    /// Flags are copied from `[jev]`. Nudge defaults on; safety/filter stay off unless set.
     pub fn jev_settings(&self) -> Option<xai_grok_tools::implementations::grok_build::JevSettings> {
         let mut settings = xai_grok_tools::implementations::grok_build::JevSettings::from_resolved(
             self.jev_key()?,

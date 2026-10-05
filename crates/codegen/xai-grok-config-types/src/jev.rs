@@ -15,7 +15,11 @@ fn default_nudge_every() -> i32 {
     2
 }
 
-/// `[jev]` in config.toml. Feature flags stay off even when a key is present.
+fn default_nudge() -> bool {
+    true
+}
+
+/// `[jev]` in config.toml. Nudge defaults on; `safety_check` and `context_filter` stay off.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct JevConfig {
@@ -28,8 +32,8 @@ pub struct JevConfig {
     /// Optional model override. The client default is `jev-latest`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
-    /// Optional self-validation nudge after a successful mutate. Default off on this fork.
-    #[serde(default)]
+    /// Optional self-validation nudge after a successful mutate. Default on when a key is present.
+    #[serde(default = "default_nudge")]
     pub nudge: bool,
     /// Emit the nudge every N successful mutates. `-1` disables. Default 2.
     #[serde(default = "default_nudge_every")]
@@ -54,7 +58,7 @@ impl Default for JevConfig {
             api_key: None,
             base_url: None,
             model: None,
-            nudge: false,
+            nudge: true,
             nudge_every: default_nudge_every(),
             safety_check: false,
             context_filter: false,

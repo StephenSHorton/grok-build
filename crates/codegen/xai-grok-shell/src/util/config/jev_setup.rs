@@ -47,7 +47,7 @@ impl JevFlag {
     pub fn explain(self) -> &'static str {
         match self {
             Self::Nudge => {
-                "after successful edits/shells, a reminder may suggest ask_jev (no extra Jev call)"
+                "default on with a key: after successful edits/shells, a reminder may suggest ask_jev (no extra Jev call)"
             }
             Self::SafetyCheck => {
                 "a deny after bash/edit/write/MCP/apply_patch means Jev judged the call destructive"
@@ -245,9 +245,9 @@ pub fn format_help() -> String {
 /jev-setup set          enter a key (TUI: masked prompt; ACP: /jev-setup set <key>)
 /jev-setup set --force  save even if the live Decide ping fails
 /jev-setup off          remove [jev].api_key (env still wins if set)
-/jev-setup nudge on|off
-/jev-setup safety on|off
-/jev-setup filter on|off
+/jev-setup nudge on|off   default on with a key
+/jev-setup safety on|off  default off
+/jev-setup filter on|off  default off
 /jev-setup apply        try to turn Jev on in this session
 /jev-setup stats        Decide latency / tokens / outcomes (same as /jev-stats)"
         .to_string()

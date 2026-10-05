@@ -49,13 +49,13 @@ impl Error {
 }
 
 /// Settings used to construct a [`Client`]. Empty / whitespace keys are disabled.
-/// Feature flags stay off unless the caller sets them; a key alone does not enable extras.
+/// `nudge` defaults on with a key; `safety_check` and `context_filter` stay off.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Settings {
     pub api_key: String,
     pub base_url: Option<String>,
     pub model: Option<String>,
-    /// Optional self-validation nudge after a successful mutate. Default off.
+    /// Optional self-validation nudge after a successful mutate. Default on with a key.
     pub nudge: bool,
     /// Emit the nudge every N successful mutates. `<= 0` disables. Default 2.
     pub nudge_every: i32,
@@ -71,7 +71,7 @@ pub struct Settings {
 }
 
 impl Settings {
-    /// `None` when `api_key` is empty or whitespace. Feature flags default off.
+    /// `None` when `api_key` is empty or whitespace. Nudge defaults on; other extras stay off.
     pub fn from_resolved(
         api_key: impl Into<String>,
         base_url: Option<String>,
@@ -85,7 +85,7 @@ impl Settings {
             api_key,
             base_url: base_url.filter(|url| !url.trim().is_empty()),
             model: model.filter(|model| !model.trim().is_empty()),
-            nudge: false,
+            nudge: true,
             nudge_every: 2,
             safety_check: false,
             risk_block: crate::DEFAULT_RISK_BLOCK,

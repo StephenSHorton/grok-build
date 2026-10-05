@@ -139,7 +139,10 @@ async fn live_apply_keeps_history_and_puts_ask_jev_on_the_outgoing_request() {
             assert!(head.contains("You are Grok. Existing session."));
             assert_eq!(
                 actor.agent.borrow().prompt_context().jev,
-                Some(xai_grok_agent::JevPromptInfo::default())
+                Some(xai_grok_agent::JevPromptInfo {
+                    nudge: true,
+                    ..Default::default()
+                })
             );
 
             let request = outgoing_request(&actor).await;

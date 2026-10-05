@@ -30,14 +30,11 @@ fn client_timeout_is_thirty_seconds() {
 }
 
 #[test]
-fn from_resolved_defaults_nudge_off() {
+fn from_resolved_defaults_nudge_on_other_extras_off() {
     let settings = Settings::from_resolved("k", None, None).expect("key");
-    assert!(!settings.nudge);
+    assert!(settings.nudge);
     assert_eq!(settings.nudge_every, 2);
-    assert!(
-        !settings.nudge_active(),
-        "a key alone must not enable the nudge"
-    );
+    assert!(settings.nudge_active(), "a key alone enables the nudge");
     assert!(!settings.safety_check);
     assert_eq!(settings.risk_block, crate::DEFAULT_RISK_BLOCK);
     assert!(!settings.allow_destructive);
@@ -55,7 +52,6 @@ fn from_resolved_defaults_nudge_off() {
 #[test]
 fn nudge_active_requires_key_flag_and_positive_every() {
     let mut settings = Settings::from_resolved("k", None, None).expect("key");
-    settings.nudge = true;
     assert!(settings.nudge_active());
     settings.nudge_every = 0;
     assert!(!settings.nudge_active());
