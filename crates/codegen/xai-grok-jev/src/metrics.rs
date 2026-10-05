@@ -33,6 +33,7 @@ pub enum DecideSource {
     Filter,
     Setup,
     Route,
+    FilePick,
 }
 
 impl DecideSource {
@@ -43,6 +44,7 @@ impl DecideSource {
             Self::Filter => "filter",
             Self::Setup => "setup",
             Self::Route => "route",
+            Self::FilePick => "file_pick",
         }
     }
 }
@@ -404,6 +406,7 @@ pub fn format_stats_report(
             DecideSource::Filter,
             DecideSource::Setup,
             DecideSource::Route,
+            DecideSource::FilePick,
         ] {
             if let Some(stats) = session.by_source.get(&source) {
                 lines.push(format_source_line(source, stats));

@@ -1219,6 +1219,11 @@ impl AgentBuilder {
                     })
                     .await;
             }
+            if settings.file_pick_active() {
+                tool_bridge
+                    .update_resource(xai_grok_tools::reminders::JevFilePickConfig)
+                    .await;
+            }
         }
         if let Some(bytes) = self.mcp_max_output_bytes {
             tool_bridge.toolset().resources.lock().await.insert(
@@ -1363,6 +1368,7 @@ impl AgentBuilder {
                     safety_check: settings.safety_active(),
                     context_filter: settings.context_filter_active(),
                     route: settings.route_active(),
+                    file_pick: settings.file_pick_active(),
                 }),
         };
         let (prompt_render_timer, prompt_render_span) = build_await_step!("prompt_render");
@@ -3507,6 +3513,12 @@ mod tests {
                 .get::<xai_grok_tools::implementations::grok_build::JevMetrics>()
                 .is_none(),
             "no-key path must not insert JevMetrics"
+        );
+        assert!(
+            resources
+                .get::<xai_grok_tools::reminders::JevFilePickConfig>()
+                .is_none(),
+            "no-key path must not insert JevFilePickConfig"
         );
     }
 

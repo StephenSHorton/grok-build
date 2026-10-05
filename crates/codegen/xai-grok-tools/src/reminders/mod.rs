@@ -11,15 +11,18 @@
 //!
 //! This module contains the cross-cutting reminders:
 //! - [`LspDiagnosticsReminder`], [`SkillDiscoveryReminder`], [`TaskCompletionReminder`],
-//!   [`JevNudgeReminder`] (no-op unless [`JevNudgeConfig`] is in Resources)
+//!   [`JevNudgeReminder`] (no-op unless [`JevNudgeConfig`] is in Resources),
+//!   [`JevFilePickReminder`] (no-op unless [`JevFilePickConfig`] is in Resources)
 //!
 //! All reminders are collected and appended in `call_new_tool()`.
 
+pub mod jev_file_pick;
 pub mod jev_nudge;
 pub mod lsp_diagnostics;
 pub mod skill_discovery;
 pub mod task_completion;
 
+pub use jev_file_pick::{JevFilePickConfig, JevFilePickReminder};
 pub use jev_nudge::{JEV_NUDGE_TEXT, JevNudgeConfig, JevNudgeReminder, JevNudgeState};
 pub use lsp_diagnostics::LspDiagnosticsReminder;
 pub use skill_discovery::SkillDiscoveryReminder;

@@ -34,6 +34,7 @@ pub enum JevFlag {
     SafetyCheck,
     ContextFilter,
     Route,
+    FilePick,
 }
 
 impl JevFlag {
@@ -43,6 +44,7 @@ impl JevFlag {
             Self::SafetyCheck => "safety_check",
             Self::ContextFilter => "context_filter",
             Self::Route => "route",
+            Self::FilePick => "file_pick",
         }
     }
 
@@ -58,6 +60,9 @@ impl JevFlag {
             Self::Route => {
                 "default on with a key: first sample may omit tools on a high-confidence trivial prompt; faults stay full-agent"
             }
+            Self::FilePick => {
+                "default off: after grep/list_dir, a reminder may name the most relevant hit (hits stay listed)"
+            }
         }
     }
 
@@ -67,6 +72,7 @@ impl JevFlag {
             "safety" | "safety_check" => Some(Self::SafetyCheck),
             "filter" | "context_filter" => Some(Self::ContextFilter),
             "route" | "routing" => Some(Self::Route),
+            "file_pick" | "filepick" | "pick" => Some(Self::FilePick),
             _ => None,
         }
     }
@@ -85,6 +91,7 @@ pub struct JevSetupStatus {
     pub safety_check: bool,
     pub context_filter: bool,
     pub route: bool,
+    pub file_pick: bool,
 }
 
 /// Owned key that `Debug`s as a mask so slash-action dumps cannot leak it.
@@ -187,6 +194,7 @@ pub fn collect_status(
         safety_check: file.safety_check,
         context_filter: file.context_filter,
         route: file.route,
+        file_pick: file.file_pick,
     }
 }
 
@@ -241,6 +249,11 @@ pub fn format_status(status: &JevSetupStatus) -> String {
         on_off(status.route),
         JevFlag::Route.explain()
     ));
+    lines.push(format!(
+        "file_pick: {} — {}",
+        on_off(status.file_pick),
+        JevFlag::FilePick.explain()
+    ));
     lines.push(
         "When this session is idle, /jev-setup apply (or a successful set/off/flag) updates ask_jev and the <jev> prompt section without compacting history. If a turn is running, apply again when idle or start a new session."
             .to_string(),
@@ -262,6 +275,7 @@ pub fn format_help() -> String {
 /jev-setup safety on|off  default off
 /jev-setup filter on|off  default off
 /jev-setup route on|off   default on with a key
+/jev-setup file_pick on|off  default off
 /jev-setup apply        try to turn Jev on in this session
 /jev-setup stats        Decide latency / tokens / outcomes (same as /jev-stats)"
         .to_string()
@@ -587,6 +601,13 @@ mod tests {
             JevSetupRequest::Flag {
                 flag: JevFlag::Route,
                 on: false
+            }
+        );
+        assert_eq!(
+            parse_args("file_pick on").unwrap(),
+            JevSetupRequest::Flag {
+                flag: JevFlag::FilePick,
+                on: true
             }
         );
         assert!(parse_args("nudge").is_err());

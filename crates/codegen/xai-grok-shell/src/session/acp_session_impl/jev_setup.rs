@@ -42,6 +42,7 @@ impl SessionActor {
                             JevFlag::SafetyCheck => settings.safety_check = on,
                             JevFlag::ContextFilter => settings.context_filter = on,
                             JevFlag::Route => settings.route = on,
+                            JevFlag::FilePick => settings.file_pick = on,
                         }
                     }
                     let apply = self.apply_jev_settings(settings).await;
@@ -202,6 +203,7 @@ impl SessionActor {
                     safety_check: settings.safety_active(),
                     context_filter: settings.context_filter_active(),
                     route: settings.route_active(),
+                    file_pick: settings.file_pick_active(),
                 });
         let bridge = self.agent.borrow().tool_bridge().clone();
         if let Err(err) = self.sync_ask_jev_tool(&bridge, enabled) {
@@ -299,6 +301,11 @@ impl SessionActor {
                     None => {
                         resources.remove::<xai_grok_tools::reminders::JevNudgeConfig>();
                     }
+                }
+                if settings.is_some_and(|s| s.file_pick_active()) {
+                    resources.insert(xai_grok_tools::reminders::JevFilePickConfig);
+                } else {
+                    resources.remove::<xai_grok_tools::reminders::JevFilePickConfig>();
                 }
                 sync_jev_metrics_resource(resources, enabled);
             })
