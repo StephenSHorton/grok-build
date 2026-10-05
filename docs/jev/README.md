@@ -4,6 +4,10 @@ Jev is a typed judge (boolean / choice / score), not an LLM. On this fork it is 
 
 No key ⇒ no tool, no HTTP, no errors. Behavior matches this fork without Jev.
 
+## Download a build
+
+This fork publishes `grok-jev-<target>` binaries on [Releases](https://github.com/StephenSHorton/grok-build/releases) (`jev-latest` is the rolling pointer). The downloaded binary signs in with your SuperGrok account. Set the Jev key with `/jev-setup`.
+
 ## `/jev-setup`
 
 Enable Jev from the TUI (or ACP/headless) without editing the file by hand.
