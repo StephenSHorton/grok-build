@@ -5,9 +5,22 @@
 # record wall-clock and a few stream counters. Does not claim 200x; it produces
 # the table that would.
 #
+# Auth: no xAI API key is required. grok -p uses the SuperGrok / OAuth session
+# in $GROK_HOME/auth.json (default ~/.grok/auth.json; GROK_AUTH_PATH overrides
+# the filename). The bench copies auth.json and config.toml into a temp
+# GROK_HOME per run so sessions and jev_stats.jsonl never write to the real
+# home. Tokens and keys are never printed.
+#
+# Jev off: the copy's [jev].api_key is stripped and JEV_API_KEY /
+# TYPESAFE_API_KEY are unset for that child. Jev on: the file or env key is
+# kept. Preflight fails early if there is no sign-in, or no Jev key for on.
+#
+# Windows: run under Git Bash or WSL. Timing uses python3 (date +%s.%N is not
+# portable). mktemp falls back to python if /tmp is missing.
+#
 # Usage:
 #   docs/jev/bench/run.sh              # all tasks, needs `grok` on PATH
-#   docs/jev/bench/run.sh --dry-run    # build fixtures only
+#   docs/jev/bench/run.sh --dry-run    # build fixtures only (no sign-in needed)
 #   docs/jev/bench/run.sh find-symbol  # one task
 set -euo pipefail
 
@@ -25,7 +38,21 @@ if [[ "${ONLY}" == "--dry-run" ]]; then
   ONLY="${2:-}"
 fi
 
-OUT="${GROK_BENCH_OUT:-$(mktemp -d /tmp/jev-bench-XXXXXX)}"
+make_out_dir() {
+  local dir=""
+  if dir="$(mktemp -d /tmp/jev-bench-XXXXXX 2>/dev/null)" && [[ -n "${dir}" && -d "${dir}" ]]; then
+    printf '%s\n' "${dir}"
+    return 0
+  fi
+  if command -v python3 >/dev/null 2>&1; then
+    python3 -c "import tempfile; print(tempfile.mkdtemp(prefix='jev-bench-'))"
+    return 0
+  fi
+  echo "cannot create a temp dir (mktemp and python3 both unavailable)" >&2
+  exit 1
+}
+
+OUT="${GROK_BENCH_OUT:-$(make_out_dir)}"
 mkdir -p "${OUT}/fixtures" "${OUT}/runs"
 echo "output: ${OUT}" >&2
 
@@ -34,6 +61,156 @@ need() {
     echo "missing $1" >&2
     exit 1
   }
+}
+
+# Real grok home to copy from. Captured before we point GROK_HOME at a temp dir.
+# GROK_BENCH_SOURCE_HOME is a test override. Never logs file contents.
+resolve_source_home() {
+  if [[ -n "${GROK_BENCH_SOURCE_HOME:-}" ]]; then
+    printf '%s\n' "${GROK_BENCH_SOURCE_HOME}"
+    return 0
+  fi
+  if [[ -n "${GROK_HOME:-}" ]]; then
+    printf '%s\n' "${GROK_HOME}"
+    return 0
+  fi
+  if [[ -n "${HOME:-}" && -d "${HOME}/.grok" ]]; then
+    printf '%s\n' "${HOME}/.grok"
+    return 0
+  fi
+  if [[ -n "${USERPROFILE:-}" && -d "${USERPROFILE}/.grok" ]]; then
+    printf '%s\n' "${USERPROFILE}/.grok"
+    return 0
+  fi
+  printf '%s\n' "${HOME:-.}/.grok"
+}
+
+resolve_source_auth() {
+  local home="$1"
+  if [[ -n "${GROK_AUTH_PATH:-}" && -f "${GROK_AUTH_PATH}" ]]; then
+    printf '%s\n' "${GROK_AUTH_PATH}"
+    return 0
+  fi
+  printf '%s\n' "${home}/auth.json"
+}
+
+# Exit 0 if auth.json looks like a signed-in session. Prints nothing about tokens.
+auth_is_signed_in() {
+  local path="$1"
+  python3 - "$path" <<'PY'
+import json, sys
+path = sys.argv[1]
+try:
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+except (OSError, json.JSONDecodeError):
+    sys.exit(1)
+if not isinstance(data, dict) or not data:
+    sys.exit(1)
+for value in data.values():
+    if not isinstance(value, dict):
+        continue
+    key = value.get("key")
+    refresh = value.get("refresh_token")
+    if (isinstance(key, str) and key.strip()) or (
+        isinstance(refresh, str) and refresh.strip()
+    ):
+        sys.exit(0)
+sys.exit(1)
+PY
+}
+
+# Exit 0 if [jev].api_key is non-empty. Prints nothing about the key.
+config_has_jev_key() {
+  local path="$1"
+  [[ -f "${path}" ]] || return 1
+  python3 - "$path" <<'PY'
+import sys
+path = sys.argv[1]
+in_jev = False
+try:
+    with open(path, encoding="utf-8") as f:
+        for raw in f:
+            line = raw.strip()
+            if line.startswith("[") and line.endswith("]"):
+                in_jev = line == "[jev]"
+                continue
+            if not in_jev or "=" not in line or line.startswith("#"):
+                continue
+            name, _, value = line.partition("=")
+            if name.strip() != "api_key":
+                continue
+            value = value.strip().strip("'").strip('"')
+            sys.exit(0 if value else 1)
+except OSError:
+    sys.exit(1)
+sys.exit(1)
+PY
+}
+
+env_has_jev_key() {
+  [[ -n "${JEV_API_KEY:-}" && -n "${JEV_API_KEY// }" ]] && return 0
+  [[ -n "${TYPESAFE_API_KEY:-}" && -n "${TYPESAFE_API_KEY// }" ]] && return 0
+  return 1
+}
+
+# Drop [jev].api_key from a copied config.toml. Never prints the value.
+strip_jev_key() {
+  local path="$1"
+  [[ -f "${path}" ]] || return 0
+  python3 - "$path" <<'PY'
+import sys
+path = sys.argv[1]
+in_jev = False
+out = []
+with open(path, encoding="utf-8") as f:
+    for raw in f:
+        stripped = raw.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            in_jev = stripped == "[jev]"
+        elif in_jev and not stripped.startswith("#") and "=" in stripped:
+            name = stripped.split("=", 1)[0].strip()
+            if name == "api_key":
+                continue
+        out.append(raw)
+with open(path, "w", encoding="utf-8") as f:
+    f.writelines(out)
+PY
+}
+
+copy_auth_and_config() {
+  local dest="$1" mode="$2"
+  mkdir -p "${dest}"
+  if [[ -f "${SOURCE_AUTH}" ]]; then
+    cp -p "${SOURCE_AUTH}" "${dest}/auth.json"
+    chmod 600 "${dest}/auth.json" 2>/dev/null || true
+  fi
+  if [[ -f "${SOURCE_HOME}/config.toml" ]]; then
+    cp -p "${SOURCE_HOME}/config.toml" "${dest}/config.toml"
+  fi
+  if [[ "${mode}" == "off" ]]; then
+    strip_jev_key "${dest}/config.toml"
+  fi
+}
+
+now_s() {
+  python3 -c "import time; print(f'{time.time():.6f}')"
+}
+
+preflight() {
+  need python3
+  need "${GROK}"
+  SOURCE_HOME="$(resolve_source_home)"
+  SOURCE_AUTH="$(resolve_source_auth "${SOURCE_HOME}")"
+  if ! auth_is_signed_in "${SOURCE_AUTH}"; then
+    echo "bench: no signed-in Grok session. Sign in with SuperGrok (no xAI API key needed)." >&2
+    echo "bench: expected auth at \$GROK_HOME/auth.json (default ~/.grok/auth.json)." >&2
+    exit 1
+  fi
+  if ! env_has_jev_key && ! config_has_jev_key "${SOURCE_HOME}/config.toml"; then
+    echo "bench: no Jev key for the on run. Set JEV_API_KEY / TYPESAFE_API_KEY, or [jev].api_key in config.toml." >&2
+    exit 1
+  fi
 }
 
 write_tree() {
@@ -176,21 +353,25 @@ run_one() {
   local task="$1" mode="$2" repeat="$3" fixture="$4" prompt="$5"
   local home="${OUT}/homes/${task}-${mode}-${repeat}"
   local stream="${OUT}/runs/${task}-${mode}-${repeat}.ndjson"
-  mkdir -p "${home}"
-  if [[ "${mode}" == "off" ]]; then
-    unset JEV_API_KEY TYPESAFE_API_KEY
-  fi
+  copy_auth_and_config "${home}" "${mode}"
+
   local args=(-p "${prompt}" --output-format streaming-json --max-turns "${MAX_TURNS}" --no-subagents --disable-web-search --permission-mode yolo)
   [[ -n "${MODEL}" ]] && args+=(--model "${MODEL}")
   [[ -n "${EFFORT}" ]] && args+=(--reasoning-effort "${EFFORT}")
 
   local start end elapsed status
-  start="$(date +%s.%N)"
+  start="$(now_s)"
   set +e
-  env GROK_HOME="${home}" "${GROK}" "${args[@]}" >"${stream}" 2>"${stream}.err"
+  if [[ "${mode}" == "off" ]]; then
+    env -u JEV_API_KEY -u TYPESAFE_API_KEY -u GROK_AUTH_PATH \
+      GROK_HOME="${home}" "${GROK}" "${args[@]}" >"${stream}" 2>"${stream}.err"
+  else
+    env -u GROK_AUTH_PATH \
+      GROK_HOME="${home}" "${GROK}" "${args[@]}" >"${stream}" 2>"${stream}.err"
+  fi
   status=$?
   set -e
-  end="$(date +%s.%N)"
+  end="$(now_s)"
   elapsed="$(python3 -c "print(round(float('${end}')-float('${start}'), 3))" 2>/dev/null || echo "?")"
 
   local samples tools asks
@@ -205,9 +386,11 @@ run_one() {
     "${task}" "${mode}" "${repeat}" "${elapsed}" "${status}" "${tools}" "${asks}" "${samples}" "${stream}"
 }
 
+SOURCE_HOME="$(resolve_source_home)"
+SOURCE_AUTH="$(resolve_source_auth "${SOURCE_HOME}")"
+
 if [[ "${DRY}" -eq 0 ]]; then
-  need "${GROK}"
-  need python3
+  preflight
 fi
 
 echo "["
