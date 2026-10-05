@@ -147,9 +147,9 @@ pub async fn maybe_route_recorded(
     if should_skip_route(query, has_image) {
         return (RouteVerdict::FullAgent, None);
     }
-    let Some(settings) = settings.filter(|s| s.route_active()) else {
+    if !settings.is_some_and(|s| s.route_active()) {
         return (RouteVerdict::FullAgent, None);
-    };
+    }
     let Some(client) = client else {
         return (RouteVerdict::FullAgent, None);
     };
