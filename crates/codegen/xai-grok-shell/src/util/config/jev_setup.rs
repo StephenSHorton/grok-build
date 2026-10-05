@@ -224,7 +224,7 @@ pub fn format_status(status: &JevSetupStatus) -> String {
         JevFlag::ContextFilter.explain()
     ));
     lines.push(
-        "When this session is idle, /jev-setup apply (or a successful set/off/flag) rebuilds the harness so ask_jev and the prompt section update without a restart. If a turn is running, apply again when idle or start a new session."
+        "When this session is idle, /jev-setup apply (or a successful set/off/flag) updates ask_jev and the <jev> prompt section without compacting history. If a turn is running, apply again when idle or start a new session."
             .to_string(),
     );
     lines.join("\n")

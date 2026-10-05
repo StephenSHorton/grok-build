@@ -360,8 +360,41 @@ impl PromptContext {
     pub fn format_jev_section(&self) -> Option<String> {
         self.jev.as_ref().map(JevPromptInfo::render_section)
     }
+    /// Replace or remove only the `<jev>…</jev>` suffix. The rest of `prompt` is unchanged
+    /// so a live `/jev-setup` apply does not re-render dates or other template sections.
+    pub fn splice_jev_section(prompt: &str, jev: Option<&JevPromptInfo>) -> String {
+        let stripped = strip_jev_section(prompt);
+        match jev {
+            Some(info) => format!("{}\n\n{}", stripped.trim_end(), info.render_section()),
+            None => stripped.trim_end().to_string(),
+        }
+    }
 }
-/// A system prompt with the [`PromptContext`] it was rendered from; only [`PromptContext::render_paired`] produces one.
+/// Drop a `<jev>…</jev>` block and the blank line that usually precedes it.
+fn strip_jev_section(prompt: &str) -> String {
+    let Some(start) = prompt.find("<jev>") else {
+        return prompt.to_string();
+    };
+    let after_open = start + "<jev>".len();
+    let Some(rel_end) = prompt[after_open..].find("</jev>") else {
+        return prompt.to_string();
+    };
+    let end = after_open + rel_end + "</jev>".len();
+    let mut before = prompt[..start].to_string();
+    while before.ends_with('\n') {
+        before.pop();
+    }
+    let after = prompt[end..].trim_start_matches(['\n', '\r']);
+    if after.is_empty() {
+        before
+    } else if before.is_empty() {
+        after.to_string()
+    } else {
+        format!("{before}\n\n{after}")
+    }
+}
+/// A system prompt with the [`PromptContext`] it was rendered from; only [`PromptContext::render_paired`]
+/// or [`RenderedPrompt::with_updated_jev`] produces one.
 pub struct RenderedPrompt {
     prompt_context: PromptContext,
     system_prompt: String,
@@ -369,6 +402,14 @@ pub struct RenderedPrompt {
 impl RenderedPrompt {
     pub(crate) fn into_parts(self) -> (PromptContext, String) {
         (self.prompt_context, self.system_prompt)
+    }
+    /// Keep the current prompt body and swap only the `<jev>` suffix to match `context.jev`.
+    pub fn with_updated_jev(context: PromptContext, current_prompt: &str) -> Self {
+        let system_prompt = PromptContext::splice_jev_section(current_prompt, context.jev.as_ref());
+        Self {
+            prompt_context: context,
+            system_prompt,
+        }
     }
 }
 #[cfg(test)]
@@ -1185,6 +1226,33 @@ Extras off: nudge, safety_check, and context_filter.
             .strip_prefix(off.as_str())
             .expect("enabled prompt must be the no-key prompt plus a suffix");
         assert_eq!(suffix, format!("\n\n{JEV_SECTION_EXTRAS_OFF}"));
+    }
+
+    #[test]
+    fn splice_jev_section_adds_and_removes_only_the_jev_block() {
+        let base = "You are Grok.\nStay helpful.";
+        let on = PromptContext::splice_jev_section(base, Some(&JevPromptInfo::default()));
+        assert_eq!(on, format!("{base}\n\n{JEV_SECTION_EXTRAS_OFF}"));
+        let off = PromptContext::splice_jev_section(&on, None);
+        assert_eq!(off, base);
+        let nudged = PromptContext::splice_jev_section(
+            &on,
+            Some(&JevPromptInfo {
+                nudge: true,
+                ..JevPromptInfo::default()
+            }),
+        );
+        assert!(nudged.contains("nudge: a reminder may suggest ask_jev"));
+        let nudged_section = JevPromptInfo {
+            nudge: true,
+            ..JevPromptInfo::default()
+        }
+        .render_section();
+        assert!(
+            nudged
+                .strip_suffix(&nudged_section)
+                .is_some_and(|head| head.trim_end() == base)
+        );
     }
 
     #[test]

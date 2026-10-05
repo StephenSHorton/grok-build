@@ -345,6 +345,8 @@ pub enum AdvertiseTrigger {
     WorkflowsChanged,
     /// `set_session_model` swapped in a harness with a different toolset.
     HarnessRebuild,
+    /// `/jev-setup` live-applied ask_jev and the `<jev>` prompt section.
+    JevSetup,
     /// Per-response token-usage meta refresh; the catalog itself is unchanged.
     UsageMeta,
 }
@@ -357,6 +359,7 @@ impl AdvertiseTrigger {
             Self::SkillDiscovery => "skill_discovery",
             Self::WorkflowsChanged => "workflows_changed",
             Self::HarnessRebuild => "harness_rebuild",
+            Self::JevSetup => "jev_setup",
             Self::UsageMeta => "usage_meta",
         }
     }

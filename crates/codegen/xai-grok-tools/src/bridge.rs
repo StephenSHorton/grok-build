@@ -202,6 +202,27 @@ impl ToolBridge {
         Ok(())
     }
 
+    /// See [`FinalizedToolset::register_first_party_tool`].
+    pub fn register_first_party_tool<T>(
+        &self,
+        name: String,
+        tool: T,
+    ) -> Result<(), xai_tool_runtime::ToolError>
+    where
+        T: xai_tool_runtime::Tool
+            + crate::types::tool_metadata::ToolMetadata
+            + std::fmt::Debug
+            + Default
+            + Send
+            + Sync
+            + 'static,
+        T::Args: serde::de::DeserializeOwned + schemars::JsonSchema + Into<crate::types::ToolInput>,
+        T::Output:
+            serde::Serialize + serde::de::DeserializeOwned + Into<crate::types::output::ToolOutput>,
+    {
+        self.registry.register_first_party_tool(name, tool)
+    }
+
     pub fn unregister_tools_by_prefix(&self, prefix: &str) -> usize {
         self.registry.unregister_tools_by_prefix(prefix)
     }

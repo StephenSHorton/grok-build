@@ -2084,6 +2084,60 @@ impl FinalizedToolset {
         });
         Ok(())
     }
+    /// Register a first-party catalog tool at runtime (e.g. mid-session `ask_jev`).
+    /// Unlike [`Self::register_tool`], parse stays on `T::Args: Into<ToolInput>` so the
+    /// host keep the typed variant instead of wrapping the call as [`ToolInput::MCPTool`].
+    pub fn register_first_party_tool<T>(
+        &self,
+        name: String,
+        tool: T,
+    ) -> Result<(), xai_tool_runtime::ToolError>
+    where
+        T: xai_tool_runtime::Tool
+            + ToolMetadata
+            + std::fmt::Debug
+            + Default
+            + Send
+            + Sync
+            + 'static,
+        T::Args: serde::de::DeserializeOwned + schemars::JsonSchema + Into<ToolInput>,
+        T::Output: serde::Serialize + serde::de::DeserializeOwned + Into<ToolOutput>,
+    {
+        let mut tools = self.tools.write();
+        if tools.iter().any(|t| t.client_name == name) {
+            return Err(xai_tool_runtime::ToolError::invalid_arguments(format!(
+                "Tool already registered: {name}"
+            )));
+        }
+        let description = tool.description_template().to_string();
+        let namespace = tool.tool_namespace().to_string();
+        let registry_id = xai_tool_runtime::Tool::id(&tool).as_str().to_owned();
+        let input_schema = generate_schema_cached::<T::Args>();
+        let definition = ToolDefinition::function(&name, Some(&description), input_schema.clone());
+        self.local_registry.register(tool);
+        tools.push(FinalizedTool {
+            namespace,
+            id: registry_id.clone(),
+            registry_id,
+            client_name: name,
+            inline_mcp_definition: None,
+            metadata: Arc::new(T::default()),
+            output_converter: Arc::new(|value| {
+                let typed: T::Output = serde_json::from_value(value)?;
+                Ok(typed.into())
+            }),
+            definition,
+            effective_params: serde_json::Value::Object(Default::default()),
+            input_schema,
+            reverse_params: HashMap::new(),
+            parse_input: Arc::new(|json| {
+                let typed = serde_json::from_value::<T::Args>(json)?;
+                Ok(typed.into())
+            }),
+            contract_version: None,
+        });
+        Ok(())
+    }
     pub fn unregister_tools_by_prefix(&self, prefix: &str) -> usize {
         let mut tools = self.tools.write();
         let before = tools.len();
@@ -3622,6 +3676,49 @@ mod tests {
             )
             .expect("dynamic tool should register");
         assert_eq!(toolset.registered_identity("docs__search"), None);
+    }
+    #[tokio::test]
+    async fn first_party_live_register_parses_ask_jev_not_mcp() {
+        let tmp = TempDir::new().unwrap();
+        let toolset = ToolRegistryBuilder::new()
+            .finalize(
+                ToolServerConfig {
+                    tools: vec![],
+                    behavior_preset: None,
+                },
+                test_session_context(&tmp),
+            )
+            .expect("empty toolset");
+        toolset
+            .register_first_party_tool(
+                crate::implementations::grok_build::ASK_JEV_TOOL_NAME.to_owned(),
+                crate::implementations::grok_build::AskJevTool,
+            )
+            .expect("first-party ask_jev");
+        let parsed = toolset
+            .try_parse(
+                crate::implementations::grok_build::ASK_JEV_TOOL_NAME,
+                &serde_json::json!({
+                    "state": {"ok": true},
+                    "questions": [{
+                        "name": "q",
+                        "question": "Is this a test?",
+                        "mode": "boolean"
+                    }]
+                }),
+            )
+            .await
+            .expect("parse");
+        assert!(
+            matches!(parsed, crate::types::ToolInput::AskJev(_)),
+            "first-party register must not wrap ask_jev as MCP, got {parsed:?}"
+        );
+        assert!(
+            toolset
+                .tool_definitions()
+                .iter()
+                .any(|td| td.function.name == crate::implementations::grok_build::ASK_JEV_TOOL_NAME)
+        );
     }
     #[tokio::test]
     async fn call_sets_effective_tool_name_for_use_tool_dispatch() {

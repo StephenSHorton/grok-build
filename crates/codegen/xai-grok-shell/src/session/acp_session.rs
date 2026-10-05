@@ -1499,6 +1499,9 @@ fn load_prompt_context_from_dir(
 #[path = "acp_session_tests/client_hooks_tests.rs"]
 mod client_hooks_tests;
 #[cfg(test)]
+#[path = "acp_session_tests/jev_setup_live_apply_tests.rs"]
+mod jev_setup_live_apply_tests;
+#[cfg(test)]
 #[path = "acp_session_tests/managed_hooks_tests.rs"]
 mod managed_hooks_tests;
 #[cfg(test)]

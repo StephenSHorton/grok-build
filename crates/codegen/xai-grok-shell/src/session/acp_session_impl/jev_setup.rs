@@ -1,10 +1,13 @@
-//! `/jev-setup` builtin: persist `[jev]`, optionally rebuild this session.
+//! `/jev-setup` builtin: persist `[jev]`, then live-refresh tools + the `<jev>` section.
 
 use super::*;
+use crate::sampling::ConversationItem;
+use crate::session::commands::AdvertiseTrigger;
 use crate::util::config::{
-    JevSetupRequest, clear_user_api_key, collect_status_from_file, env_key_is_live, format_help,
-    format_status, save_user_api_key, set_user_flag, validate_key,
+    JevFlag, JevSetupRequest, clear_user_api_key, collect_status_from_file, env_key_is_live,
+    format_help, format_status, save_user_api_key, set_user_flag, validate_key,
 };
+use xai_grok_tools::implementations::grok_build::{ASK_JEV_TOOL_NAME, AskJevTool, JevClient};
 
 impl SessionActor {
     pub(super) async fn execute_jev_setup(
@@ -27,7 +30,17 @@ impl SessionActor {
             JevSetupRequest::Off => self.jev_setup_off().await,
             JevSetupRequest::Flag { flag, on } => match set_user_flag(flag, on).await {
                 Ok(()) => {
-                    let apply = self.apply_jev_settings_to_session().await;
+                    let mut settings = load_typed_config()
+                        .jev_settings()
+                        .or_else(|| self.rebuild_spec.jev_settings.get());
+                    if let Some(ref mut settings) = settings {
+                        match flag {
+                            JevFlag::Nudge => settings.nudge = on,
+                            JevFlag::SafetyCheck => settings.safety_check = on,
+                            JevFlag::ContextFilter => settings.context_filter = on,
+                        }
+                    }
+                    let apply = self.apply_jev_settings(settings).await;
                     format!(
                         "{} is {}.\n{}\n\n{}",
                         flag.name(),
@@ -60,7 +73,9 @@ impl SessionActor {
                 if let Err(save_err) = save_user_api_key(key).await {
                     return save_err;
                 }
-                let apply = self.apply_jev_settings_to_session().await;
+                let apply = self
+                    .apply_jev_settings(settings_after_saving_key(key))
+                    .await;
                 return format!(
                     "Saved [jev].api_key even though validation failed:\n{err}\n\n{apply}"
                 );
@@ -74,7 +89,9 @@ impl SessionActor {
         if let Err(err) = save_user_api_key(key).await {
             return err;
         }
-        let apply = self.apply_jev_settings_to_session().await;
+        let apply = self
+            .apply_jev_settings(settings_after_saving_key(key))
+            .await;
         format!("Saved [jev].api_key (masked in status).\n{apply}")
     }
 
@@ -88,25 +105,24 @@ impl SessionActor {
                 "Removed [jev].api_key. Env JEV_API_KEY / TYPESAFE_API_KEY is still set and wins, so Jev stays on until you unset the env var.\n{apply}"
             );
         }
-        let apply = self.apply_jev_settings_to_session().await;
+        let apply = self.apply_jev_settings(None).await;
         format!("Removed [jev].api_key. Jev is off unless an env key is set.\n{apply}")
     }
 
-    /// Reload file/env settings into the rebuild spec and rebuild the harness when idle.
-    pub(super) async fn apply_jev_settings_to_session(self: &Arc<Self>) -> String {
-        let settings = load_typed_config().jev_settings();
-        self.rebuild_spec.jev_settings.set(settings.clone());
-        let definition = self.agent.borrow().definition().clone();
-        let label = self
-            .agent
-            .borrow()
-            .prompt_context()
-            .system_prompt_label
-            .clone();
-        match self
-            .handle_rebuild_agent_for_definition(definition, label)
+    /// Reload file/env settings and live-apply them without a harness rebuild.
+    pub(super) async fn apply_jev_settings_to_session(&self) -> String {
+        self.apply_jev_settings(load_typed_config().jev_settings())
             .await
-        {
+    }
+
+    /// Live-apply `settings` on the current agent: swap `ask_jev` and the `<jev>`
+    /// suffix only. History is not rewritten and compaction is not triggered.
+    pub(super) async fn apply_jev_settings(
+        &self,
+        settings: Option<xai_grok_tools::implementations::grok_build::JevSettings>,
+    ) -> String {
+        self.rebuild_spec.jev_settings.set(settings.clone());
+        match self.refresh_jev_on_live_agent(settings.as_ref()).await {
             Ok(()) => {
                 if settings.is_some() {
                     "Jev is on in this session (ask_jev registered, prompt section added). No restart needed.".to_string()
@@ -123,6 +139,158 @@ impl SessionActor {
             }
         }
     }
+
+    /// Install or remove `ask_jev` + the `<jev>` section on the live agent.
+    /// Fails only when a turn pins the agent (`running_task`).
+    pub(super) async fn refresh_jev_on_live_agent(
+        &self,
+        settings: Option<&xai_grok_tools::implementations::grok_build::JevSettings>,
+    ) -> Result<(), acp::Error> {
+        {
+            let state = self.state.lock().await;
+            if state.running_task.is_some() {
+                tracing::warn!(
+                    session_id = %self.session_info.id.0,
+                    "refresh_jev_on_live_agent: turn in flight, refusing to swap tools/prompt"
+                );
+                return Err(acp::Error::internal_error()
+                    .data("jev_setup: turn in flight, refusing to refresh Jev"));
+            }
+        }
+        let enabled = settings.is_some_and(|s| s.is_enabled());
+        let jev_info =
+            settings
+                .filter(|s| s.is_enabled())
+                .map(|settings| xai_grok_agent::JevPromptInfo {
+                    nudge: settings.nudge_active(),
+                    safety_check: settings.safety_active(),
+                    context_filter: settings.context_filter_active(),
+                });
+        let bridge = self.agent.borrow().tool_bridge().clone();
+        if let Err(err) = self.sync_ask_jev_tool(&bridge, enabled) {
+            tracing::warn!(
+                session_id = %self.session_info.id.0,
+                error = %err,
+                "refresh_jev_on_live_agent: ask_jev register/unregister failed"
+            );
+            return Err(acp::Error::internal_error().data(err));
+        }
+        self.sync_jev_resources(&bridge, settings).await;
+        {
+            let mut prompt_context = self.agent.borrow().prompt_context().clone();
+            if prompt_context.jev != jev_info {
+                prompt_context.jev = jev_info;
+                let current = self.agent.borrow().system_prompt().to_string();
+                let rendered =
+                    xai_grok_agent::RenderedPrompt::with_updated_jev(prompt_context, &current);
+                self.agent.borrow_mut().set_rendered_prompt(rendered);
+            }
+        }
+        self.publish_jev_prompt().await;
+        self.send_available_commands_update(AdvertiseTrigger::JevSetup)
+            .await;
+        tracing::info!(
+            session_id = %self.session_info.id.0,
+            enabled,
+            "refresh_jev_on_live_agent: ask_jev and <jev> section updated without rebuild"
+        );
+        Ok(())
+    }
+
+    fn sync_ask_jev_tool(
+        &self,
+        bridge: &xai_grok_tools::bridge::ToolBridge,
+        enabled: bool,
+    ) -> Result<(), String> {
+        bridge.unregister_tool_by_name(ASK_JEV_TOOL_NAME);
+        if enabled {
+            bridge
+                .register_first_party_tool(ASK_JEV_TOOL_NAME.to_owned(), AskJevTool)
+                .map_err(|err| format!("failed to register ask_jev: {err}"))?;
+        }
+        Ok(())
+    }
+
+    async fn sync_jev_resources(
+        &self,
+        bridge: &xai_grok_tools::bridge::ToolBridge,
+        settings: Option<&xai_grok_tools::implementations::grok_build::JevSettings>,
+    ) {
+        let enabled = settings.is_some_and(|s| s.is_enabled());
+        if enabled {
+            if let Some(settings) = settings {
+                match settings.client() {
+                    Ok(client) => bridge.update_resource(client).await,
+                    Err(err) => tracing::warn!("failed to construct Jev client: {err}"),
+                }
+            }
+        } else {
+            bridge
+                .update_resources_with(|resources| {
+                    resources.remove::<JevClient>();
+                })
+                .await;
+        }
+        let nudge = settings.filter(|s| s.nudge_active());
+        bridge
+            .update_resources_with(|resources| {
+                use xai_grok_tools::types::resources::{
+                    EnabledNativeToolNames, NativeToolClientNames,
+                };
+                if let Some(names) = resources.get_mut::<EnabledNativeToolNames>() {
+                    if enabled {
+                        names.0.insert(ASK_JEV_TOOL_NAME.to_owned());
+                    } else {
+                        names.0.remove(ASK_JEV_TOOL_NAME);
+                    }
+                }
+                if let Some(names) = resources.get_mut::<NativeToolClientNames>() {
+                    if enabled {
+                        names
+                            .0
+                            .insert(ASK_JEV_TOOL_NAME.to_owned(), ASK_JEV_TOOL_NAME.to_owned());
+                    } else {
+                        names.0.remove(ASK_JEV_TOOL_NAME);
+                    }
+                }
+                match nudge {
+                    Some(settings) => {
+                        resources.insert(xai_grok_tools::reminders::JevNudgeConfig {
+                            every: settings.nudge_every,
+                        });
+                    }
+                    None => {
+                        resources.remove::<xai_grok_tools::reminders::JevNudgeConfig>();
+                    }
+                }
+            })
+            .await;
+    }
+
+    /// Persist the prompt artifacts and swap only the `<jev>` suffix on the
+    /// conversation system head (memory manifests and inherited prefixes stay).
+    async fn publish_jev_prompt(&self) {
+        self.abort_and_clear_prefire().await;
+        let (system_prompt, persisted_context, jev) = {
+            let agent = self.agent.borrow();
+            let mut persisted_context = agent.prompt_context().clone();
+            persisted_context.normalize_for_persistence();
+            (
+                agent.system_prompt().to_string(),
+                persisted_context,
+                agent.prompt_context().jev.clone(),
+            )
+        };
+        super::save_prompt_context(&self.session_info, &persisted_context);
+        super::save_system_prompt(&self.session_info, &system_prompt);
+        let conversation = self.chat_state_handle.get_conversation().await;
+        let current_head = match conversation.first() {
+            Some(ConversationItem::System(sys)) => sys.content.as_ref(),
+            _ => system_prompt.as_str(),
+        };
+        let head = xai_grok_agent::PromptContext::splice_jev_section(current_head, jev.as_ref());
+        self.chat_state_handle.replace_system_head(&head).await;
+    }
 }
 
 fn load_typed_config() -> crate::agent::config::Config {
@@ -130,4 +298,13 @@ fn load_typed_config() -> crate::agent::config::Config {
         .ok()
         .and_then(|raw| crate::agent::config::Config::new_from_toml_cfg(&raw).ok())
         .unwrap_or_default()
+}
+
+/// Prefer a fresh effective-config read; if that snapshot is stale, still enable from the key we just wrote.
+fn settings_after_saving_key(
+    key: &str,
+) -> Option<xai_grok_tools::implementations::grok_build::JevSettings> {
+    load_typed_config().jev_settings().or_else(|| {
+        xai_grok_tools::implementations::grok_build::JevSettings::from_resolved(key, None, None)
+    })
 }
