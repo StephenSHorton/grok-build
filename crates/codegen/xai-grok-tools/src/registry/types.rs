@@ -798,6 +798,7 @@ impl ToolRegistryBuilder {
         b.register_reminder(crate::reminders::TaskCompletionReminder);
         b.register_reminder(SkillDiscoveryReminder);
         b.register_reminder(crate::reminders::JevNudgeReminder);
+        b.register_reminder(crate::reminders::JevFilePickReminder);
         for pack in tool_packs().lock().iter() {
             pack(&mut b);
         }

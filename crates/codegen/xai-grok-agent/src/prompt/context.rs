@@ -158,6 +158,9 @@ pub struct JevPromptInfo {
     /// Fail-open first-sample tool omit on a high-confidence trivial prompt.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub route: bool,
+    /// Fail-open file-pick hint after grep / list_dir.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub file_pick: bool,
 }
 impl JevPromptInfo {
     /// Concise `<jev>` system-prompt section. Callers append this only when Jev is on.
@@ -178,8 +181,13 @@ impl JevPromptInfo {
                     "route: the first sample may omit tools if Jev is sure the prompt is trivial",
                 );
             }
+            if self.file_pick {
+                parts.push(
+                    "file_pick: after grep/list_dir a reminder may name the most relevant hit",
+                );
+            }
             if parts.is_empty() {
-                "Extras off: nudge, safety_check, context_filter, and route.".to_string()
+                "Extras off: nudge, safety_check, context_filter, route, and file_pick.".to_string()
             } else {
                 format!("On: {}.", parts.join("; "))
             }
@@ -1184,7 +1192,7 @@ Put facts/snippets in `state` (Jev cannot read files). Batch named boolean/choic
 - boolean: noul float (aliases noul/yes/yesno); no yes/no threshold.
 - choice: requires `options` (label → meaning).
 - score: requires `levels` (2–10 descriptions).
-Extras off: nudge, safety_check, context_filter, and route.
+Extras off: nudge, safety_check, context_filter, route, and file_pick.
 </jev>";
 
     #[test]
@@ -1266,12 +1274,14 @@ Extras off: nudge, safety_check, context_filter, and route.
             safety_check: true,
             context_filter: true,
             route: true,
+            file_pick: true,
         }
         .render_section();
         assert!(all_on.contains("nudge: a reminder may suggest ask_jev"));
         assert!(all_on.contains("safety_check: a deny means Jev judged"));
         assert!(all_on.contains("context_filter: older tool results may be omitted"));
         assert!(all_on.contains("route: the first sample may omit tools"));
+        assert!(all_on.contains("file_pick: after grep/list_dir"));
         assert!(!all_on.contains("Extras off:"));
     }
 

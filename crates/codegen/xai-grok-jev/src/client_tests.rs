@@ -52,6 +52,11 @@ fn from_resolved_defaults_nudge_on_other_extras_off() {
         settings.route_active(),
         "a key alone enables trivial-request routing"
     );
+    assert!(!settings.file_pick);
+    assert!(
+        !settings.file_pick_active(),
+        "a key alone must not enable file pick"
+    );
 }
 
 #[test]

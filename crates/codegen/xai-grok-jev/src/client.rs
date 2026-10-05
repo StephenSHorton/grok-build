@@ -70,6 +70,8 @@ pub struct Settings {
     pub context_filter: bool,
     /// Optional fail-open trivial-request router before the first sample. Default on with a key.
     pub route: bool,
+    /// Optional fail-open file pick after grep / list_dir. Default off.
+    pub file_pick: bool,
 }
 
 impl Settings {
@@ -94,6 +96,7 @@ impl Settings {
             allow_destructive: false,
             context_filter: false,
             route: true,
+            file_pick: false,
         })
     }
 
@@ -119,6 +122,11 @@ impl Settings {
     /// Router runs only with a key and `route = true`.
     pub fn route_active(&self) -> bool {
         self.is_enabled() && self.route
+    }
+
+    /// File pick runs only with a key and `file_pick = true`.
+    pub fn file_pick_active(&self) -> bool {
+        self.is_enabled() && self.file_pick
     }
 
     /// Rock `riskAt`: non-positive values fall back to [`crate::DEFAULT_RISK_BLOCK`].

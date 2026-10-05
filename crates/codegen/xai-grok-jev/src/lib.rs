@@ -8,6 +8,7 @@ mod ask;
 mod client;
 mod keep;
 mod metrics;
+mod pick;
 mod route;
 mod safety;
 mod types;
@@ -19,6 +20,11 @@ pub use ask::{
 pub use client::{
     Client, Error, HOSTED_DECIDE_URL, OFFICIAL_DECIDE_URL, RESPONSE_BODY_CAP, Settings, TIMEOUT,
     endpoint_for,
+};
+pub use pick::{
+    FilePickVerdict, MAX_CANDIDATES, MIN_CANDIDATES, NONE_LABEL, PICK_ANSWER_NAME,
+    PICK_INSTRUCTIONS, candidates, maybe_pick_file, maybe_pick_file_recorded, pick_file,
+    pick_file_recorded, pick_question, reminder_text,
 };
 pub use keep::{
     DEFAULT_MIN_CONFIDENCE, KEEP_ANSWER_NAME, KEEP_INSTRUCTIONS, QUERY_CLIP_CHARS,

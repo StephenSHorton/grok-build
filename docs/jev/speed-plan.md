@@ -121,4 +121,4 @@ What else is required, besides more Decide hooks:
 4. **Repo context that is not exploratory reads** (index, embeddings, or a cheap tree digest at session start).
 5. **Product discipline** — auto-end and auto-edit are how you get 200× *and* how you ship wrong patches. Fail-open, read-only first, measure pass-rate.
 
-Shipped (smaller safe version): `[jev].route` (default **on** with a key) asks before the first sample and may set `tool_choice = none`. It does **not** execute a one-tool allowlist or skip the sample. Left: `one_tool` without a model round, file picking, and the done check.
+Shipped (smaller safe versions): `[jev].route` (default **on** with a key) may omit tools on the first sample. `[jev].file_pick` (default **off**) may hint one grep/list_dir path; it does **not** hide other hits or skip the next sample. Left: glob parsing, auto-read of the pick, `one_tool` without a model round, and the done check.
