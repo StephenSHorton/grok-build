@@ -89,4 +89,5 @@ Only when a key is present, the system prompt gets a short `<jev>` section: use 
 ## Related
 
 - Slice history and insertion points: [`plan.md`](plan.md), [`harness-map.md`](harness-map.md)
+- 200× speed north-star, bench, and ranked harness skips: [`speed-plan.md`](speed-plan.md)
 - Public decide how-to: <https://jevtypesafeai.com/decide/how-to-use>
