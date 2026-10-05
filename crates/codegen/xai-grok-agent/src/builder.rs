@@ -1362,6 +1362,7 @@ impl AgentBuilder {
                     nudge: settings.nudge_active(),
                     safety_check: settings.safety_active(),
                     context_filter: settings.context_filter_active(),
+                    route: settings.route_active(),
                 }),
         };
         let (prompt_render_timer, prompt_render_span) = build_await_step!("prompt_render");
@@ -3593,11 +3594,16 @@ mod tests {
             prompt.contains("nudge: a reminder may suggest ask_jev"),
             "key-only defaults nudge on: {prompt}"
         );
+        assert!(
+            prompt.contains("route: the first sample may omit tools"),
+            "key-only defaults route on: {prompt}"
+        );
         assert!(!prompt.contains("Extras off:"));
         assert_eq!(
             agent.prompt_context().jev.as_ref(),
             Some(&crate::prompt::context::JevPromptInfo {
                 nudge: true,
+                route: true,
                 ..Default::default()
             })
         );

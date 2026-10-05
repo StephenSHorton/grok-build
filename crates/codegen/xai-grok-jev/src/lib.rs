@@ -8,6 +8,7 @@ mod ask;
 mod client;
 mod keep;
 mod metrics;
+mod route;
 mod safety;
 mod types;
 
@@ -23,6 +24,12 @@ pub use keep::{
     DEFAULT_MIN_CONFIDENCE, KEEP_ANSWER_NAME, KEEP_INSTRUCTIONS, QUERY_CLIP_CHARS,
     SNIPPET_CLIP_CHARS, clip_text, keep_question, keep_snippet, keep_snippet_recorded,
     maybe_keep_snippet, maybe_keep_snippet_recorded,
+};
+pub use route::{
+    ACTION_ANSWER_NAME, ACTION_FULL_AGENT, ACTION_INSTRUCTIONS, ACTION_NO_TOOLS, DEFAULT_ROUTE_MIN,
+    QUERY_MAX_CHARS, RouteVerdict, TRIVIAL_ANSWER_NAME, TRIVIAL_INSTRUCTIONS, action_question,
+    maybe_route, maybe_route_recorded, route_request, route_request_recorded, should_skip_route,
+    trivial_question,
 };
 pub use metrics::{
     DecideErrorKind, DecideRecord, DecideSource, FilterOutcome, JevMetrics, NUDGE_FOLLOW_WINDOW,

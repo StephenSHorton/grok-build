@@ -141,6 +141,7 @@ async fn live_apply_keeps_history_and_puts_ask_jev_on_the_outgoing_request() {
                 actor.agent.borrow().prompt_context().jev,
                 Some(xai_grok_agent::JevPromptInfo {
                     nudge: true,
+                    route: true,
                     ..Default::default()
                 })
             );

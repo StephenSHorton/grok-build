@@ -49,7 +49,7 @@ impl Error {
 }
 
 /// Settings used to construct a [`Client`]. Empty / whitespace keys are disabled.
-/// `nudge` defaults on with a key; `safety_check` and `context_filter` stay off.
+/// `nudge` and `route` default on with a key; `safety_check` and `context_filter` stay off.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Settings {
     pub api_key: String,
@@ -68,10 +68,12 @@ pub struct Settings {
     pub allow_destructive: bool,
     /// Optional fail-open context filter on older tool results. Default off.
     pub context_filter: bool,
+    /// Optional fail-open trivial-request router before the first sample. Default on with a key.
+    pub route: bool,
 }
 
 impl Settings {
-    /// `None` when `api_key` is empty or whitespace. Nudge defaults on; other extras stay off.
+    /// `None` when `api_key` is empty or whitespace. Nudge and route default on; other extras stay off.
     pub fn from_resolved(
         api_key: impl Into<String>,
         base_url: Option<String>,
@@ -91,6 +93,7 @@ impl Settings {
             risk_block: crate::DEFAULT_RISK_BLOCK,
             allow_destructive: false,
             context_filter: false,
+            route: true,
         })
     }
 
@@ -111,6 +114,11 @@ impl Settings {
     /// Context filter runs only with a key and `context_filter = true`.
     pub fn context_filter_active(&self) -> bool {
         self.is_enabled() && self.context_filter
+    }
+
+    /// Router runs only with a key and `route = true`.
+    pub fn route_active(&self) -> bool {
+        self.is_enabled() && self.route
     }
 
     /// Rock `riskAt`: non-positive values fall back to [`crate::DEFAULT_RISK_BLOCK`].
