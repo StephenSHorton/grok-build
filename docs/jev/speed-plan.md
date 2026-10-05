@@ -16,6 +16,8 @@ Without a fixed task set and the same meters, “200×” is a slogan.
 
 Each task is a fresh temp git repo plus one headless prompt. The script in `bench/run.sh` builds the fixture, runs `grok -p`, and writes a JSON row. Do not reuse sessions (`--fork-session` / new `--session-id` each run). Pin `--model` and `--reasoning-effort`.
 
+No xAI API key is required. `grok -p` authenticates with the SuperGrok / OAuth session stored at `$GROK_HOME/auth.json` (default `~/.grok/auth.json`; `GROK_AUTH_PATH` can point at another file). The bench copies `auth.json` and `config.toml` into a **temp** `GROK_HOME` per run so stats and sessions do not write to the real home. Tokens and Jev keys are never printed. On Windows, run the script under Git Bash or WSL (timing uses python3).
+
 | Id | Prompt shape | What it stresses |
 |---|---|---|
 | `trivial-status` | “What is the git status?” | Routing: should not need a long reasoning turn. |
