@@ -1,0 +1,199 @@
+# Build xai-grok-pager-bin and publish grok-jev-<target> GitHub Releases.
+# Triggers: push to main, and manual workflow_dispatch.
+name: Release grok-jev
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: grok-jev-release-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  PROTOC_VERSION: "29.3"
+  RUST_TOOLCHAIN: "1.94.0"
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    continue-on-error: ${{ matrix.best_effort }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            target: aarch64-apple-darwin
+            artifact: grok-jev-aarch64-apple-darwin
+            best_effort: false
+          - os: macos-14
+            target: x86_64-apple-darwin
+            artifact: grok-jev-x86_64-apple-darwin
+            best_effort: false
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact: grok-jev-x86_64-unknown-linux-gnu
+            best_effort: false
+          # Windows is best-effort: jemalloc is unix-only (build with stock),
+          # and bin/protoc has no Windows DotSlash platform.
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: grok-jev-x86_64-pc-windows-msvc.exe
+            best_effort: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Enable long paths (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          git config --system core.longpaths true
+          New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" -Name "LongPathsEnabled" -Value 1 -PropertyType DWORD -Force | Out-Null
+
+      - name: Install protoc ${{ env.PROTOC_VERSION }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${{ runner.os }}" in
+            Linux)   zip="protoc-${PROTOC_VERSION}-linux-x86_64.zip" ;;
+            macOS)   zip="protoc-${PROTOC_VERSION}-osx-aarch_64.zip" ;;
+            Windows) zip="protoc-${PROTOC_VERSION}-win64.zip" ;;
+            *) echo "unsupported host ${{ runner.os }}" >&2; exit 1 ;;
+          esac
+          dest="${HOME}/protoc"
+          mkdir -p "$dest"
+          curl -fsSL "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/${zip}" -o /tmp/protoc.zip
+          py=python3
+          command -v python3 >/dev/null 2>&1 || py=python
+          "$py" -c "import zipfile,sys; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])" /tmp/protoc.zip "$dest"
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            proto_exe="${dest}/bin/protoc.exe"
+            echo "PROTOC=$(cygpath -w "$proto_exe")" >> "$GITHUB_ENV"
+            echo "$(cygpath -w "${dest}/bin")" >> "$GITHUB_PATH"
+            "$proto_exe" --version
+          else
+            chmod +x "${dest}/bin/protoc"
+            echo "PROTOC=${dest}/bin/protoc" >> "$GITHUB_ENV"
+            echo "${dest}/bin" >> "$GITHUB_PATH"
+            "${dest}/bin/protoc" --version
+          fi
+
+      - name: Install Rust ${{ env.RUST_TOOLCHAIN }}
+        uses: dtolnay/rust-toolchain@1.94.0
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: pager-bin-${{ matrix.target }}
+          cache-on-failure: true
+
+      - name: Build xai-grok-pager-bin
+        shell: bash
+        run: |
+          set -euo pipefail
+          extra=()
+          if [[ "${{ matrix.target }}" == *windows* ]]; then
+            # jemalloc deps are unix-only; stock is the supported Windows feature set.
+            extra=(--no-default-features --features stock)
+          fi
+          cargo build -p xai-grok-pager-bin --release --target "${{ matrix.target }}" "${extra[@]}"
+
+      - name: Stage grok-jev binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          src="target/${{ matrix.target }}/release/xai-grok-pager"
+          if [[ "${{ matrix.target }}" == *windows* ]]; then
+            src="${src}.exe"
+          fi
+          test -f "$src"
+          cp "$src" "dist/${{ matrix.artifact }}"
+          ls -la "dist/${{ matrix.artifact }}"
+          if command -v file >/dev/null 2>&1; then
+            file "dist/${{ matrix.artifact }}"
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/${{ matrix.artifact }}
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish GitHub Release
+    needs: build
+    if: ${{ always() && !cancelled() && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - name: Download binaries
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: grok-jev-*
+          merge-multiple: true
+
+      - name: Publish versioned + jev-latest releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          assets=(dist/grok-jev-*)
+          if (( ${#assets[@]} == 0 )); then
+            echo "No grok-jev binaries were uploaded; refusing to publish an empty release." >&2
+            exit 1
+          fi
+          ls -la dist
+          file dist/grok-jev-* || true
+
+          date_utc="$(date -u +%Y%m%d)"
+          shortsha="${GITHUB_SHA:0:7}"
+          tag="jev-v${date_utc}-${shortsha}"
+          if gh release view "$tag" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            tag="${tag}-${{ github.run_number }}"
+          fi
+
+          notes_file="$(mktemp)"
+          {
+            echo "Fork builds of \`xai-grok-pager-bin\`, named \`grok-jev-<target>\` so they do not clash with the official \`grok\` binary."
+            echo
+            echo "The downloaded binary signs in with your SuperGrok account. Set the Jev key with \`/jev-setup\`."
+            echo
+            echo "- Commit: \`${GITHUB_SHA}\`"
+            echo "- Workflow: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          } > "$notes_file"
+
+          gh release create "$tag" "${assets[@]}" \
+            --repo "${{ github.repository }}" \
+            --title "grok-jev ${tag}" \
+            --notes-file "$notes_file" \
+            --latest
+
+          # Rolling pointer with stable download URLs under /releases/download/jev-latest/
+          gh release delete jev-latest --repo "${{ github.repository }}" --yes --cleanup-tag || true
+          gh release create jev-latest "${assets[@]}" \
+            --repo "${{ github.repository }}" \
+            --title "grok-jev latest (${tag})" \
+            --notes-file "$notes_file" \
+            --latest=false
+
+          echo "Published ${tag} and updated jev-latest"
+          echo "https://github.com/${{ github.repository }}/releases/tag/${tag}"
