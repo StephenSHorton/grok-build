@@ -183,7 +183,7 @@ impl JevPromptInfo {
         };
         format!(
             "<jev>\n\
-Use ask_jev as the default for any decision with enumerable options (next tool, which files, which fix, done/failure-gone, relevance, risk, triage, plan pick). Prefer a cheap check over guessing; skip only already-certain steps and tight loops.\n\
+Use ask_jev as the default for enumerable decisions (next tool, which files, which fix, done/failure-gone, relevance, risk, triage, plan pick). Jev answers in ~100–400ms vs seconds of model reasoning — offload the choice instead of thinking it through. Skip only already-certain steps and tight loops.\n\
 Put facts/snippets in `state` (Jev cannot read files). Batch named boolean/choice/score questions in one call. Act on the answer; on low confidence or failure (`error`/`detail`, no `value`) use your own judgment. Never invent an answer.\n\
 - boolean: noul float (aliases noul/yes/yesno); no yes/no threshold.\n\
 - choice: requires `options` (label → meaning).\n\
@@ -1176,7 +1176,7 @@ mod tests {
     /// Locked extras-off `<jev>` section. Changing this text is a prompt-cost change.
     const JEV_SECTION_EXTRAS_OFF: &str = "\
 <jev>
-Use ask_jev as the default for any decision with enumerable options (next tool, which files, which fix, done/failure-gone, relevance, risk, triage, plan pick). Prefer a cheap check over guessing; skip only already-certain steps and tight loops.
+Use ask_jev as the default for enumerable decisions (next tool, which files, which fix, done/failure-gone, relevance, risk, triage, plan pick). Jev answers in ~100–400ms vs seconds of model reasoning — offload the choice instead of thinking it through. Skip only already-certain steps and tight loops.
 Put facts/snippets in `state` (Jev cannot read files). Batch named boolean/choice/score questions in one call. Act on the answer; on low confidence or failure (`error`/`detail`, no `value`) use your own judgment. Never invent an answer.
 - boolean: noul float (aliases noul/yes/yesno); no yes/no threshold.
 - choice: requires `options` (label → meaning).
@@ -1212,7 +1212,7 @@ Extras off: nudge, safety_check, and context_filter.
         let section = JevPromptInfo::default().render_section();
         assert_eq!(section, JEV_SECTION_EXTRAS_OFF);
         assert!(section.contains("Use ask_jev as the default"));
-        assert!(section.contains("Prefer a cheap check over guessing"));
+        assert!(section.contains("~100–400ms"));
         assert!(section.contains("Never invent an answer"));
     }
 

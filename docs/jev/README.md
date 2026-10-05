@@ -84,7 +84,7 @@ Read-only and allowed in plan mode. `disallowed_tools = ["ask_jev"]` still hides
 
 ## What the model sees
 
-Only when a key is present, the system prompt gets a short `<jev>` section: use `ask_jev` as the default for enumerable decisions, put facts in `state` (Jev cannot read files), batch named boolean/choice/score questions, act on the answer, fall back to your own judgment on low confidence or failure (never invent answers), skip only already-certain steps and tight loops, and which extras are on. No key ⇒ that section is absent and the prompt is byte-identical to the no-Jev snapshot.
+Only when a key is present, the system prompt gets a short `<jev>` section: use `ask_jev` as the default for enumerable decisions (Jev answers in ~100–400ms vs seconds of model reasoning — offload the choice instead of thinking it through), put facts in `state` (Jev cannot read files), batch named boolean/choice/score questions, act on the answer, fall back to your own judgment on low confidence or failure (never invent answers), skip only already-certain steps and tight loops, and which extras are on. No key ⇒ that section is absent and the prompt is byte-identical to the no-Jev snapshot.
 
 ## Related
 

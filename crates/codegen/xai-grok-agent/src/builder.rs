@@ -3586,6 +3586,7 @@ mod tests {
         );
         assert!(prompt.contains("ask_jev"));
         assert!(prompt.contains("Use ask_jev as the default"));
+        assert!(prompt.contains("~100–400ms"));
         assert!(prompt.contains("Jev cannot read files"));
         assert!(prompt.contains("Never invent an answer"));
         assert!(

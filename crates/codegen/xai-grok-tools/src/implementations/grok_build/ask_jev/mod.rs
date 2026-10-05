@@ -72,7 +72,7 @@ impl crate::types::tool_metadata::ToolMetadata for AskJevTool {
     }
 
     fn description_template(&self) -> &str {
-        "Default decision tool: ask Jev (typed judge) named boolean/choice/score questions about `state` whenever a choice is enumerable. \
+        "Default decision tool (~100–400ms typed judge): ask named boolean/choice/score questions about `state` whenever a choice is enumerable, instead of reasoning it out. \
 Put facts in `state` (Jev cannot read files). Batch related questions in one call. \
 Boolean is a noul float (no yes/no threshold). Choice needs `options` (label → meaning). \
 Score needs `levels` (2–10 descriptions). On failure: error/detail and no value — do not invent an answer; continue the turn."
