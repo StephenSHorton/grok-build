@@ -183,11 +183,11 @@ impl JevPromptInfo {
         };
         format!(
             "<jev>\n\
-Jev is a typed judge, not an LLM. Use ask_jev for named boolean/choice/score questions about facts you put in `state` (Jev cannot read files). Batch related questions in one call.\n\
+Use ask_jev as the default for enumerable decisions (next tool, which files, which fix, done/failure-gone, relevance, risk, triage, plan pick). Jev answers in ~100–400ms vs seconds of model reasoning — offload the choice instead of thinking it through. Skip only already-certain steps and tight loops.\n\
+Put facts/snippets in `state` (Jev cannot read files). Batch named boolean/choice/score questions in one call. Act on the answer; on low confidence or failure (`error`/`detail`, no `value`) use your own judgment. Never invent an answer.\n\
 - boolean: noul float (aliases noul/yes/yesno); no yes/no threshold.\n\
 - choice: requires `options` (label → meaning).\n\
 - score: requires `levels` (2–10 descriptions).\n\
-A failed or unanswered call is an observation (`error`/`detail`, no `value`). Never invent an answer; continue the turn.\n\
 {extras}\n\
 </jev>"
         )
@@ -1173,14 +1173,14 @@ mod tests {
         );
     }
 
-    /// Locked no-key `<jev>` absence + extras-off section. Changing this text is a prompt-cost change.
+    /// Locked extras-off `<jev>` section. Changing this text is a prompt-cost change.
     const JEV_SECTION_EXTRAS_OFF: &str = "\
 <jev>
-Jev is a typed judge, not an LLM. Use ask_jev for named boolean/choice/score questions about facts you put in `state` (Jev cannot read files). Batch related questions in one call.
+Use ask_jev as the default for enumerable decisions (next tool, which files, which fix, done/failure-gone, relevance, risk, triage, plan pick). Jev answers in ~100–400ms vs seconds of model reasoning — offload the choice instead of thinking it through. Skip only already-certain steps and tight loops.
+Put facts/snippets in `state` (Jev cannot read files). Batch named boolean/choice/score questions in one call. Act on the answer; on low confidence or failure (`error`/`detail`, no `value`) use your own judgment. Never invent an answer.
 - boolean: noul float (aliases noul/yes/yesno); no yes/no threshold.
 - choice: requires `options` (label → meaning).
 - score: requires `levels` (2–10 descriptions).
-A failed or unanswered call is an observation (`error`/`detail`, no `value`). Never invent an answer; continue the turn.
 Extras off: nudge, safety_check, and context_filter.
 </jev>";
 
@@ -1209,10 +1209,11 @@ Extras off: nudge, safety_check, and context_filter.
 
     #[test]
     fn jev_section_snapshot_extras_off() {
-        assert_eq!(
-            JevPromptInfo::default().render_section(),
-            JEV_SECTION_EXTRAS_OFF
-        );
+        let section = JevPromptInfo::default().render_section();
+        assert_eq!(section, JEV_SECTION_EXTRAS_OFF);
+        assert!(section.contains("Use ask_jev as the default"));
+        assert!(section.contains("~100–400ms"));
+        assert!(section.contains("Never invent an answer"));
     }
 
     #[test]

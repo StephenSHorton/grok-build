@@ -3511,20 +3511,18 @@ mod tests {
 
     #[tokio::test]
     async fn key_without_nudge_does_not_insert_nudge_config() {
+        let mut settings = jev_settings_for_tests();
+        settings.nudge = false;
         let agent = AgentBuilder::new(
             std::env::temp_dir(),
             Arc::new(xai_grok_tools::computer::local::LocalTerminalBackend::new()),
             xai_grok_tools::notification::ToolNotificationHandle::noop(),
         )
         .from_definition(crate::config::AgentDefinition::default_grok_build())
-        .with_jev_settings(Some(jev_settings_for_tests()))
+        .with_jev_settings(Some(settings))
         .build()
         .await
         .expect("key, nudge off");
-        assert!(
-            !jev_settings_for_tests().nudge_active(),
-            "from_resolved must keep nudge off"
-        );
         assert!(
             !jev_settings_for_tests().safety_active(),
             "from_resolved must keep the safety check off"
@@ -3547,9 +3545,8 @@ mod tests {
 
     #[tokio::test]
     async fn key_and_nudge_inserts_nudge_config() {
-        let mut settings = jev_settings_for_tests();
-        settings.nudge = true;
-        settings.nudge_every = 2;
+        let settings = jev_settings_for_tests();
+        assert!(settings.nudge_active(), "from_resolved defaults nudge on");
         let agent = AgentBuilder::new(
             std::env::temp_dir(),
             Arc::new(xai_grok_tools::computer::local::LocalTerminalBackend::new()),
@@ -3581,22 +3578,28 @@ mod tests {
         .with_jev_settings(Some(jev_settings_for_tests()))
         .build()
         .await
-        .expect("key, extras off");
+        .expect("key, nudge default on");
         let prompt = agent.system_prompt();
         assert!(
             prompt.contains("<jev>"),
             "enabled prompt must include the Jev section: {prompt}"
         );
         assert!(prompt.contains("ask_jev"));
+        assert!(prompt.contains("Use ask_jev as the default"));
+        assert!(prompt.contains("~100–400ms"));
         assert!(prompt.contains("Jev cannot read files"));
         assert!(prompt.contains("Never invent an answer"));
         assert!(
-            prompt.contains("Extras off: nudge, safety_check, and context_filter."),
-            "key-only must report extras off: {prompt}"
+            prompt.contains("nudge: a reminder may suggest ask_jev"),
+            "key-only defaults nudge on: {prompt}"
         );
+        assert!(!prompt.contains("Extras off:"));
         assert_eq!(
             agent.prompt_context().jev.as_ref(),
-            Some(&crate::prompt::context::JevPromptInfo::default())
+            Some(&crate::prompt::context::JevPromptInfo {
+                nudge: true,
+                ..Default::default()
+            })
         );
     }
 

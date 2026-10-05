@@ -27,7 +27,10 @@ impl SlashCommand for JevSetupCommand {
             arg("set", "Enter a key (masked prompt)"),
             arg("set --force", "Save even if Decide ping fails"),
             arg("off", "Remove the file key"),
-            arg("nudge on", "Remind after successful edits/shells"),
+            arg(
+                "nudge on",
+                "Remind after successful edits/shells (default on with a key)",
+            ),
             arg("nudge off", "Turn the nudge off"),
             arg("safety on", "Fail-open destructive-call check"),
             arg("safety off", "Turn the safety check off"),

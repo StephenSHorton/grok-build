@@ -44,12 +44,12 @@ fn typesafe_used_when_jev_unset() {
 }
 
 #[test]
-fn default_feature_flags_are_off() {
+fn default_nudge_on_other_feature_flags_off() {
     let cfg = JevConfig::default();
     assert!(cfg.api_key.is_none());
     assert!(cfg.base_url.is_none());
     assert!(cfg.model.is_none());
-    assert!(!cfg.nudge);
+    assert!(cfg.nudge);
     assert_eq!(cfg.nudge_every, 2);
     assert!(!cfg.safety_check);
     assert!(!cfg.context_filter);
@@ -61,8 +61,10 @@ fn default_feature_flags_are_off() {
 fn toml_round_trip_keeps_file_key_and_defaults() {
     let parsed: JevConfig = toml::from_str("api_key = \"from-file\"\n").unwrap();
     assert_eq!(parsed.api_key.as_deref(), Some("from-file"));
-    assert!(!parsed.nudge);
+    assert!(parsed.nudge, "omitted nudge defaults on");
     assert_eq!(parsed.nudge_every, 2);
     assert!(!parsed.safety_check);
     assert!(!parsed.context_filter);
+    let off: JevConfig = toml::from_str("api_key = \"from-file\"\nnudge = false\n").unwrap();
+    assert!(!off.nudge);
 }

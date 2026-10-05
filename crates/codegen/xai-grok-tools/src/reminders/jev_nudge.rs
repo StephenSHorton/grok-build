@@ -23,8 +23,8 @@ pub struct JevNudgeState {
 pub struct JevNudgeReminder;
 
 /// Hint appended to a successful edit/write/allowed shell. No Decide call.
-pub const JEV_NUDGE_TEXT: &str = "If this change was a fix, consider ask_jev before declaring done \
-(boolean: is the failure gone? score/boolean: too risky?). You decide whether to call it.";
+pub const JEV_NUDGE_TEXT: &str = "If this change was a fix, ask_jev before declaring done \
+(boolean: is the failure gone? score/boolean: too risky?). Prefer the check over guessing.";
 
 fn is_successful_mutate(output: &ToolOutput) -> bool {
     match output {
