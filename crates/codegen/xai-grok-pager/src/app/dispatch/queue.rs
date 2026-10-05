@@ -577,49 +577,75 @@ pub(super) fn maybe_drain_queue(agent: &mut AgentView, notices: &mut Vec<String>
         }
         QueueEntryKind::Command => {
             let token = crate::slash::parse_invocation(&queued.text).map_or("", |inv| inv.token);
-            let (command, started, effect) = match token {
-                "flush" => (
+            let tracked = match token {
+                "flush" => Some((
                     AgentCommand::MemoryFlush,
                     SessionEvent::MemoryCommandStarted {
                         command: MemoryCommandKind::Flush,
                     },
                     Effect::MemoryFlush {
                         agent_id,
-                        session_id,
+                        session_id: session_id.clone(),
                     },
-                ),
-                "dream" => (
+                )),
+                "dream" => Some((
                     AgentCommand::MemoryDream,
                     SessionEvent::MemoryCommandStarted {
                         command: MemoryCommandKind::Dream,
                     },
                     Effect::MemoryDream {
                         agent_id,
-                        session_id,
+                        session_id: session_id.clone(),
                     },
-                ),
-                _ => (
+                )),
+                "compact" => Some((
                     AgentCommand::Compact,
                     SessionEvent::CompactStarted,
                     Effect::Compact {
                         agent_id,
-                        session_id,
+                        session_id: session_id.clone(),
                     },
-                ),
+                )),
+                // /jev-stats, /jev-setup apply, and other session builtins must
+                // reach the shell as a prompt. Defaulting them to Compact ate
+                // their output and never live-applied ask_jev after set.
+                _ => None,
             };
-            agent.session.start_command(command);
-            // The command owns the pane; a leftover wake marker must not shadow stop.
-            agent.running_wake_turn = None;
-            agent.turn_started_at = Some(Instant::now());
-            // Invocation marker: each run visibly owns its outcome line (completed/cancelled/failed)
-            // For `/compact` this matches the auto path's "Context N% full. Compacting…".
-            // Local block only: like the outcome lines it is not persisted, so resume replays neither
+            if let Some((command, started, effect)) = tracked {
+                agent.session.start_command(command);
+                // The command owns the pane; a leftover wake marker must not shadow stop.
+                agent.running_wake_turn = None;
+                agent.turn_started_at = Some(Instant::now());
+                // Invocation marker: each run visibly owns its outcome line (completed/cancelled/failed)
+                // For `/compact` this matches the auto path's "Context N% full. Compacting…".
+                // Local block only: like the outcome lines it is not persisted, so resume replays neither
+                agent
+                    .scrollback
+                    .push_block(RenderBlock::session_event(started));
+
+                return QueueDrain {
+                    effects: vec![effect],
+                    page_flip_entry: None,
+                };
+            }
+
+            agent.begin_local_turn(&prompt_id);
+            let block = RenderBlock::user_prompt(&queued.text);
+            let prompt_idx = {
+                let _id = agent.scrollback.push_block(block);
+                agent.scrollback.len().saturating_sub(1)
+            };
             agent
                 .scrollback
-                .push_block(RenderBlock::session_event(started));
-
+                .follow_new_turn(Some(prompt_idx), page_flip_on_send());
             QueueDrain {
-                effects: vec![effect],
+                effects: vec![Effect::SendPrompt {
+                    agent_id,
+                    session_id,
+                    text: queued.text,
+                    prompt_id,
+                    skill_token_ranges: queued.skill_token_ranges,
+                }],
                 page_flip_entry: None,
             }
         }
@@ -1389,6 +1415,38 @@ mod tests {
                 },
             ] => assert_eq!(summary, "Dream merged 7 observations into 3 topics."),
             other => panic!("expected marker → outcome, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn jev_queued_commands_send_as_prompts_not_compact() {
+        use crate::scrollback::blocks::SessionEvent;
+        for cmd in ["/jev-stats", "/jev-setup apply", "/jev-setup"] {
+            let mut app = test_app_with_agent();
+            let id = AgentId(0);
+            let agent = app.agents.get_mut(&id).unwrap();
+            agent.session.enqueue_command(cmd.into());
+            let drain = maybe_drain_queue(agent, &mut app.pending_image_notices);
+            assert!(
+                matches!(
+                    drain.effects.as_slice(),
+                    [Effect::SendPrompt { text, .. }] if text == cmd
+                ),
+                "{cmd} must reach the shell, not Compact, got {:?}",
+                drain.effects
+            );
+            assert!(
+                agent.session.state.command_in_flight().is_none(),
+                "{cmd} must not start AgentCommand::Compact"
+            );
+            let started_compact = (0..agent.scrollback.len()).any(|i| {
+                matches!(
+                    agent.scrollback.entry(i).map(|e| &e.block),
+                    Some(RenderBlock::SessionEvent(ev))
+                        if matches!(ev.event, SessionEvent::CompactStarted)
+                )
+            });
+            assert!(!started_compact, "{cmd} must not paint CompactStarted");
         }
     }
 

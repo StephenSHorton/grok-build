@@ -268,6 +268,121 @@ async fn new_session_build_with_file_key_registers_ask_jev() {
             let prompt = agent.system_prompt();
             assert!(prompt.contains("<jev>"), "{prompt}");
             assert!(prompt.contains("ask_jev"), "{prompt}");
+
+            let tools: Vec<String> = agent
+                .tool_definitions()
+                .await
+                .into_iter()
+                .map(|td| td.function.name)
+                .collect();
+            assert!(
+                tools.iter().any(|n| n == ASK_JEV_TOOL_NAME),
+                "fresh start must list ask_jev in the request tools: {tools:?}"
+            );
+        })
+        .await;
+}
+
+async fn assert_history_untouched(
+    actor: &SessionActor,
+    before_tail: &serde_json::Value,
+    before_compact: Option<usize>,
+) {
+    let after = actor.chat_state_handle.get_conversation().await;
+    assert_eq!(
+        tail_json(&after),
+        *before_tail,
+        "slash must not rewrite or compact user/assistant history"
+    );
+    assert!(!has_compaction_meta(&after));
+    assert_eq!(
+        actor
+            .chat_state_handle
+            .get_last_compaction_prompt_index()
+            .await,
+        before_compact
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn jev_stats_and_setup_apply_do_not_compact_existing_history() {
+    let local = tokio::task::LocalSet::new();
+    local
+        .run_until(async {
+            let actor = Arc::new(actor_with_history().await);
+            let before = actor.chat_state_handle.get_conversation().await;
+            let before_tail = tail_json(&before);
+            let before_compact = actor
+                .chat_state_handle
+                .get_last_compaction_prompt_index()
+                .await;
+
+            actor
+                .execute_builtin_slash_command(
+                    crate::session::slash_commands::BuiltinAction::JevStats,
+                )
+                .await
+                .expect("jev-stats builtin");
+            assert_history_untouched(&actor, &before_tail, before_compact).await;
+
+            actor
+                .execute_builtin_slash_command(
+                    crate::session::slash_commands::BuiltinAction::JevSetup(Ok(
+                        crate::util::config::JevSetupRequest::Apply,
+                    )),
+                )
+                .await
+                .expect("jev-setup apply builtin");
+            assert_history_untouched(&actor, &before_tail, before_compact).await;
+
+            actor
+                .execute_builtin_slash_command(
+                    crate::session::slash_commands::BuiltinAction::JevSetup(Ok(
+                        crate::util::config::JevSetupRequest::Status,
+                    )),
+                )
+                .await
+                .expect("jev-setup status builtin");
+            assert_history_untouched(&actor, &before_tail, before_compact).await;
+        })
+        .await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn status_reports_whether_ask_jev_is_offered_and_apply_puts_it_on_the_wire() {
+    let local = tokio::task::LocalSet::new();
+    local
+        .run_until(async {
+            let actor = Arc::new(actor_with_history().await);
+            let before_tail = tail_json(&actor.chat_state_handle.get_conversation().await);
+            let before_compact = actor
+                .chat_state_handle
+                .get_last_compaction_prompt_index()
+                .await;
+
+            let off_status = actor.jev_setup_status_text().await;
+            assert!(
+                off_status.contains("ask_jev offered to model: no"),
+                "{off_status}"
+            );
+            assert!(!actor.ask_jev_offered_to_model().await);
+
+            let msg = actor.apply_jev_settings(Some(test_jev_settings())).await;
+            assert!(msg.contains("ask_jev registered"), "{msg}");
+            assert_history_untouched(&actor, &before_tail, before_compact).await;
+            assert!(actor.ask_jev_offered_to_model().await);
+            let on_status = actor.jev_setup_status_text().await;
+            assert!(
+                on_status.contains("ask_jev offered to model: yes"),
+                "{on_status}"
+            );
+
+            let request = outgoing_request(&actor).await;
+            assert!(
+                request_has_ask_jev(&request),
+                "live apply must list ask_jev on the next request"
+            );
+            assert!(head_text(&actor.chat_state_handle.get_conversation().await).contains("<jev>"));
         })
         .await;
 }

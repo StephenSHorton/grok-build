@@ -57,21 +57,28 @@ impl SlashCommand for JevSetupCommand {
         ])
     }
 
-    fn run(&self, _ctx: &mut CommandExecCtx, args: &str) -> CommandResult {
+    fn run(&self, ctx: &mut CommandExecCtx, args: &str) -> CommandResult {
         match parse_args(args) {
-            Ok(JevSetupRequest::Status) | Ok(JevSetupRequest::Help) => {
-                let mut text = format_status(&current_jev_status());
-                text.push_str("\n\n");
-                text.push_str(&format_help());
-                text.push_str(
-                    "\n\nIn the TUI, `/jev-setup set` opens a masked prompt. Do not paste the key after the command.",
-                );
-                if matches!(parse_args(args), Ok(JevSetupRequest::Help)) {
-                    CommandResult::Message(format_help())
+            Ok(JevSetupRequest::Status) => {
+                if ctx.session_id.is_some() {
+                    CommandResult::QueueCommand("/jev-setup".to_string())
                 } else {
+                    let mut text = format_status(&current_jev_status());
+                    text.push_str("\n\n");
+                    text.push_str(&format_help());
+                    text.push_str(
+                        "\n\nIn the TUI, `/jev-setup set` opens a masked prompt. Do not paste the key after the command.",
+                    );
                     CommandResult::Message(text)
                 }
             }
+            Ok(JevSetupRequest::Help) => CommandResult::Message({
+                let mut text = format_help();
+                text.push_str(
+                    "\n\nIn the TUI, `/jev-setup set` opens a masked prompt. Do not paste the key after the command.",
+                );
+                text
+            }),
             Ok(JevSetupRequest::Set { key, force }) => {
                 if key.is_some() {
                     return CommandResult::Error(
@@ -142,6 +149,26 @@ mod tests {
         };
         assert!(text.contains("Jev:"));
         assert!(!text.contains("JEV_API_KEY="));
+    }
+
+    #[test]
+    fn status_with_a_session_queues_the_shell_builtin() {
+        let models = ModelState::default();
+        let bundle = crate::app::bundle::BundleState::default();
+        let sid = agent_client_protocol::SessionId::from("test-session".to_string());
+        let mut ctx = CommandExecCtx {
+            models: &models,
+            session_id: Some(&sid),
+            bundle_state: &bundle,
+            screen_mode: crate::app::ScreenMode::Inline,
+            billing_surface_visible: true,
+            usage_command_visible: true,
+            pager_state: crate::settings::PagerLocalSnapshot::default(),
+        };
+        assert!(matches!(
+            JevSetupCommand.run(&mut ctx, ""),
+            CommandResult::QueueCommand(cmd) if cmd == "/jev-setup"
+        ));
     }
 
     #[test]

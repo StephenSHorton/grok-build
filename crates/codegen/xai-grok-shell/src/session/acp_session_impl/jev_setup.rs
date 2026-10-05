@@ -22,7 +22,7 @@ impl SessionActor {
             Err(err) => return format!("{err}\n\n{}", format_help()),
         };
         match request {
-            JevSetupRequest::Status => self.jev_setup_status_text(),
+            JevSetupRequest::Status => self.jev_setup_status_text().await,
             JevSetupRequest::Help => format_help(),
             JevSetupRequest::Set { key, force } => {
                 let Some(key) = key else {
@@ -83,12 +83,27 @@ impl SessionActor {
         }
     }
 
-    fn jev_setup_status_text(&self) -> String {
+    pub(super) async fn jev_setup_status_text(&self) -> String {
         let cfg = load_typed_config();
         let mut text = format_status(&collect_status_from_file(&cfg.jev));
+        text.push_str(&format!(
+            "\nask_jev offered to model: {}",
+            if self.ask_jev_offered_to_model().await {
+                "yes"
+            } else {
+                "no"
+            }
+        ));
         text.push_str("\n\n");
         text.push_str(&format_help());
         text
+    }
+
+    pub(super) async fn ask_jev_offered_to_model(&self) -> bool {
+        self.prepare_tool_definitions()
+            .await
+            .iter()
+            .any(|td| td.function.name == ASK_JEV_TOOL_NAME)
     }
 
     async fn jev_setup_save_key(self: &Arc<Self>, key: &str, force: bool) -> String {
