@@ -17,7 +17,7 @@ impl SlashCommand for JevSetupCommand {
     slash_meta! {
         name: "jev-setup",
         description: "Enable Jev, set or remove the key, and toggle extras",
-        usage: "/jev-setup [status|set [--force]|off|nudge on|off|safety on|off|filter on|off|route on|off|file_pick on|off|apply|stats]",
+        usage: "/jev-setup [status|set [--force]|off|nudge on|off|safety on|off|filter on|off|route on|off|file_pick on|off|done on|off|apply|stats]",
         takes_args: true,
     }
 
@@ -46,6 +46,11 @@ impl SlashCommand for JevSetupCommand {
                 "After grep/list_dir, hint the most relevant hit (default off)",
             ),
             arg("file_pick off", "Turn file picking off"),
+            arg(
+                "done on",
+                "End the turn after a mutate if Jev is sure the request is done (default off)",
+            ),
+            arg("done off", "Turn the done check off"),
             arg("apply", "Turn Jev on in this session if idle"),
             arg("stats", "Decide latency, tokens, and outcomes"),
             arg("help", "Show usage"),
@@ -177,6 +182,10 @@ mod tests {
         assert!(matches!(
             run("file_pick on"),
             CommandResult::QueueCommand(cmd) if cmd == "/jev-setup file_pick on"
+        ));
+        assert!(matches!(
+            run("done on"),
+            CommandResult::QueueCommand(cmd) if cmd == "/jev-setup done_check on"
         ));
         assert!(matches!(
             run("apply"),

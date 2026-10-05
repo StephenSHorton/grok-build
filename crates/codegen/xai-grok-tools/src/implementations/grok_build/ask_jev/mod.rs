@@ -9,9 +9,10 @@ use std::collections::BTreeMap;
 use xai_grok_jev::{AskResult, Query, ask_failed, ask_recorded, validate_queries};
 
 pub use xai_grok_jev::{
-    Client as JevClient, DecideRecord, JevMetrics, RouteVerdict, SafetyVerdict,
-    Settings as JevSettings, maybe_keep_snippet, maybe_keep_snippet_recorded, maybe_risk_check,
-    maybe_risk_check_recorded, maybe_route, maybe_route_recorded,
+    Client as JevClient, DecideRecord, DoneVerdict, JevMetrics, RouteVerdict, SafetyVerdict,
+    Settings as JevSettings, maybe_done_check, maybe_done_check_recorded, maybe_keep_snippet,
+    maybe_keep_snippet_recorded, maybe_risk_check, maybe_risk_check_recorded, maybe_route,
+    maybe_route_recorded,
 };
 
 use crate::types::output::ToolOutput;

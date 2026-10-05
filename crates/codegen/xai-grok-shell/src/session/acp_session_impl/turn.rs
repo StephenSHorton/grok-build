@@ -3823,6 +3823,9 @@ impl SessionActor {
                 self.execute_tool_calls(tool_call_responses, requested_model)
                     .await
             };
+            let mutate_batch = step_tool_kinds
+                .iter()
+                .any(|kind| super::jev_done::is_mutate_kind(*kind));
             match execute_tool_calls_result {
                 Ok(ToolLoop::PermissionReject { tool_name, reason }) => {
                     return Ok(TurnOutcome::Cancelled {
@@ -3851,6 +3854,13 @@ impl SessionActor {
                     continue;
                 }
                 _ => {}
+            }
+            if self.apply_jev_done_check(mutate_batch).await {
+                return Ok(TurnOutcome::Completed {
+                    tools_called: turn_tools_called,
+                    structured_output: None,
+                    stop: CompletedStop::EndTurn,
+                });
             }
             let next_turn = tool_turn_count + 1;
             if let Some(limit) = self.max_turns

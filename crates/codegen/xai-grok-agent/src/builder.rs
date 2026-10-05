@@ -1369,6 +1369,7 @@ impl AgentBuilder {
                     context_filter: settings.context_filter_active(),
                     route: settings.route_active(),
                     file_pick: settings.file_pick_active(),
+                    done_check: settings.done_check_active(),
                 }),
         };
         let (prompt_render_timer, prompt_render_span) = build_await_step!("prompt_render");

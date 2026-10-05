@@ -54,6 +54,9 @@ pub struct JevConfig {
     /// Optional fail-open file pick after grep / list_dir. Default off.
     #[serde(default)]
     pub file_pick: bool,
+    /// Optional fail-open done check after a successful mutate. Default off.
+    #[serde(default)]
+    pub done_check: bool,
     /// Noul threshold for an optional safety deny. `None` means the later-slice default (0.72).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub risk_block: Option<f64>,
@@ -74,6 +77,7 @@ impl Default for JevConfig {
             context_filter: false,
             route: true,
             file_pick: false,
+            done_check: false,
             risk_block: None,
             allow_destructive: false,
         }

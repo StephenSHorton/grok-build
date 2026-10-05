@@ -55,6 +55,7 @@ fn default_nudge_on_other_feature_flags_off() {
     assert!(!cfg.context_filter);
     assert!(cfg.route);
     assert!(!cfg.file_pick);
+    assert!(!cfg.done_check);
     assert!(cfg.risk_block.is_none());
     assert!(!cfg.allow_destructive);
 }
@@ -69,6 +70,7 @@ fn toml_round_trip_keeps_file_key_and_defaults() {
     assert!(!parsed.context_filter);
     assert!(parsed.route, "omitted route defaults on");
     assert!(!parsed.file_pick);
+    assert!(!parsed.done_check);
     let off: JevConfig = toml::from_str("api_key = \"from-file\"\nnudge = false\n").unwrap();
     assert!(!off.nudge);
 }

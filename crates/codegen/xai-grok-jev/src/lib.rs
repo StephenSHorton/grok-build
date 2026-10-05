@@ -6,6 +6,7 @@
 
 mod ask;
 mod client;
+mod done;
 mod keep;
 mod metrics;
 mod pick;
@@ -20,6 +21,10 @@ pub use ask::{
 pub use client::{
     Client, Error, HOSTED_DECIDE_URL, OFFICIAL_DECIDE_URL, RESPONSE_BODY_CAP, Settings, TIMEOUT,
     endpoint_for,
+};
+pub use done::{
+    DEFAULT_DONE_MIN, DONE_ANSWER_NAME, DONE_INSTRUCTIONS, DoneVerdict, done_check,
+    done_check_recorded, done_question, maybe_done_check, maybe_done_check_recorded,
 };
 pub use pick::{
     FilePickVerdict, MAX_CANDIDATES, MIN_CANDIDATES, NONE_LABEL, PICK_ANSWER_NAME,

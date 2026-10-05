@@ -43,6 +43,7 @@ impl SessionActor {
                             JevFlag::ContextFilter => settings.context_filter = on,
                             JevFlag::Route => settings.route = on,
                             JevFlag::FilePick => settings.file_pick = on,
+                            JevFlag::DoneCheck => settings.done_check = on,
                         }
                     }
                     let apply = self.apply_jev_settings(settings).await;
@@ -204,6 +205,7 @@ impl SessionActor {
                     context_filter: settings.context_filter_active(),
                     route: settings.route_active(),
                     file_pick: settings.file_pick_active(),
+                    done_check: settings.done_check_active(),
                 });
         let bridge = self.agent.borrow().tool_bridge().clone();
         if let Err(err) = self.sync_ask_jev_tool(&bridge, enabled) {

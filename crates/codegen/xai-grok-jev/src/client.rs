@@ -72,6 +72,8 @@ pub struct Settings {
     pub route: bool,
     /// Optional fail-open file pick after grep / list_dir. Default off.
     pub file_pick: bool,
+    /// Optional fail-open done check after a successful mutate. Default off.
+    pub done_check: bool,
 }
 
 impl Settings {
@@ -97,6 +99,7 @@ impl Settings {
             context_filter: false,
             route: true,
             file_pick: false,
+            done_check: false,
         })
     }
 
@@ -127,6 +130,11 @@ impl Settings {
     /// File pick runs only with a key and `file_pick = true`.
     pub fn file_pick_active(&self) -> bool {
         self.is_enabled() && self.file_pick
+    }
+
+    /// Done check runs only with a key and `done_check = true`.
+    pub fn done_check_active(&self) -> bool {
+        self.is_enabled() && self.done_check
     }
 
     /// Rock `riskAt`: non-positive values fall back to [`crate::DEFAULT_RISK_BLOCK`].

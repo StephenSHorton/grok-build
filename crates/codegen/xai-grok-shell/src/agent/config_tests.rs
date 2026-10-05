@@ -404,6 +404,8 @@ fn jev_settings_nudge_defaults_on_when_key_present_and_flag_unset() {
     assert!(settings.route_active());
     assert!(!settings.file_pick);
     assert!(!settings.file_pick_active());
+    assert!(!settings.done_check);
+    assert!(!settings.done_check_active());
 }
 
 #[test]
