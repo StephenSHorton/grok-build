@@ -1863,6 +1863,7 @@ impl Config {
         settings.context_filter = self.jev.context_filter;
         settings.route = self.jev.route;
         settings.file_pick = self.jev.file_pick;
+        settings.done_check = self.jev.done_check;
         Some(settings)
     }
     /// Whether product analytics may run. Every product analytics check calls this.

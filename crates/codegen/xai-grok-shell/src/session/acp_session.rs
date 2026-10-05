@@ -120,6 +120,8 @@ use active_agent_message_presentation::*;
 mod jev_context_filter;
 #[path = "acp_session_impl/jev_route.rs"]
 mod jev_route;
+#[path = "acp_session_impl/jev_done.rs"]
+mod jev_done;
 #[path = "acp_session_impl/jev_setup.rs"]
 mod jev_setup;
 #[path = "acp_session_impl/post_tool_use_delivery.rs"]

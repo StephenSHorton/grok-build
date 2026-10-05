@@ -57,6 +57,11 @@ fn from_resolved_defaults_nudge_on_other_extras_off() {
         !settings.file_pick_active(),
         "a key alone must not enable file pick"
     );
+    assert!(!settings.done_check);
+    assert!(
+        !settings.done_check_active(),
+        "a key alone must not enable the done check"
+    );
 }
 
 #[test]
