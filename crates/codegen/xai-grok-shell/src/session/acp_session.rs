@@ -118,6 +118,8 @@ mod active_agent_message_presentation;
 use active_agent_message_presentation::*;
 #[path = "acp_session_impl/jev_context_filter.rs"]
 mod jev_context_filter;
+#[path = "acp_session_impl/jev_setup.rs"]
+mod jev_setup;
 #[path = "acp_session_impl/post_tool_use_delivery.rs"]
 mod post_tool_use_delivery;
 #[path = "acp_session_impl/tool_calls.rs"]

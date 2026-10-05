@@ -766,6 +766,7 @@ impl AgentView {
             title: self.prompt_caption(),
             image_preview: !self.resize_hides_prompt_preview(),
         };
+        self.prompt.mask_input = self.prompt_input_mode.is_secret();
         let next = crate::views::session_title::rename_source_title_raw(self)
             .map(crate::views::session_title::sanitize_display_text);
         if self.prompt.slash_current_title() != next.as_deref() {

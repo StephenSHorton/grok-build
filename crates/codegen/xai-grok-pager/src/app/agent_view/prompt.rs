@@ -15,6 +15,21 @@ use crate::views::prompt_widget::PromptEvent;
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 impl AgentView {
+    /// Build the send Action for the current input mode. JevKey stashes the
+    /// secret on the view so it never appears in Action Debug.
+    fn take_send_action(&mut self, text: String) -> Action {
+        if self.prompt_input_mode.is_secret() {
+            self.jev_pending_key = Some(text);
+            let force = self.jev_setup_force;
+            self.jev_setup_force = false;
+            self.prompt_input_mode = PromptInputMode::Normal;
+            return Action::SubmitJevKey { force };
+        }
+        let action = self.prompt_input_mode.send_action(text);
+        self.prompt_input_mode = PromptInputMode::Normal;
+        action
+    }
+
     pub fn prompt_history_loading(&self) -> bool {
         self.session.prompt_history_loading && self.prompt.text().is_empty()
     }
@@ -457,6 +472,8 @@ impl AgentView {
         //     With non-empty text, Esc falls through to Esc policy (cancel / mid-turn swallow / clear / rewind). Mode is preserved for re-focus.
         if self.prompt_input_mode.is_exit_key(key) && self.prompt.text().is_empty() {
             self.prompt_input_mode = PromptInputMode::Normal;
+            self.jev_setup_force = false;
+            self.jev_pending_key = None;
             return InputOutcome::Changed;
         }
 
@@ -494,8 +511,7 @@ impl AgentView {
         //    Apple Terminal: bare Enter may actually be Cmd/Opt+Enter.
         if self.multiline_mode && crate::input::is_mod_enter(key) {
             if let Some(text) = self.prompt.try_send() {
-                let action = self.prompt_input_mode.send_action(text);
-                self.prompt_input_mode = PromptInputMode::Normal;
+                let action = self.take_send_action(text);
                 return InputOutcome::Action(action);
             }
             return InputOutcome::Changed;
@@ -510,6 +526,7 @@ impl AgentView {
                     // Poll CoreGraphics for the real modifier state; if Shift/Option/Cmd is held, insert a newline instead of sending
                     if key.code == KeyCode::Enter
                         && self.prompt_input_mode != PromptInputMode::Bash
+                        && !self.prompt_input_mode.is_secret()
                         && !slash_accepted_send
                         && crate::input::is_apple_terminal_newline_modifier_held()
                     {
@@ -522,6 +539,7 @@ impl AgentView {
                     // Inserting a blank line on an empty prompt is never useful here; same path as normal mode
                     if self.multiline_mode
                         && self.prompt_input_mode != PromptInputMode::Bash
+                        && !self.prompt_input_mode.is_secret()
                         && !slash_accepted_send
                     {
                         if matches!(self.prompt_mode, PromptMode::Normal)
@@ -535,15 +553,13 @@ impl AgentView {
                     }
                     if let Some(text) = self.prompt.try_send() {
                         // Remember mode with slash_accepted_send: treat as normal SendPrompt (the slash path accepted a no-arg command)
-                        let action_mode = if self.prompt_input_mode == PromptInputMode::Remember
+                        if self.prompt_input_mode == PromptInputMode::Remember
                             && slash_accepted_send
                         {
-                            PromptInputMode::Normal
-                        } else {
-                            self.prompt_input_mode
-                        };
-                        let action = action_mode.send_action(text);
-                        self.prompt_input_mode = PromptInputMode::Normal;
+                            self.prompt_input_mode = PromptInputMode::Normal;
+                            return InputOutcome::Action(Action::SendPrompt(text));
+                        }
+                        let action = self.take_send_action(text);
                         return InputOutcome::Action(action);
                     }
                     // Mid-turn with a queued follow-up: bare Enter force-sends the top queue row so users discover send-now without a chord

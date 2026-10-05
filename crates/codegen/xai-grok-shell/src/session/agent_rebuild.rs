@@ -88,6 +88,19 @@ impl MemoryV2AccessSlot {
         *self.0.lock() = access;
     }
 }
+/// Live Jev settings shared by spawn, `/jev-setup`, safety/filter, and rebuilds.
+pub(crate) struct JevSettingsSlot(parking_lot::Mutex<Option<JevSettings>>);
+impl JevSettingsSlot {
+    pub(crate) fn new(settings: Option<JevSettings>) -> Self {
+        Self(parking_lot::Mutex::new(settings))
+    }
+    pub(crate) fn get(&self) -> Option<JevSettings> {
+        self.0.lock().clone()
+    }
+    pub(crate) fn set(&self, settings: Option<JevSettings>) {
+        *self.0.lock() = settings;
+    }
+}
 /// Cached recipe for building a session-scoped [`Agent`].
 /// See module docs for the invariant: this is the only construction site for `Agent` in the shell crate.
 /// Cloning is intentionally not derived; the spec lives behind an [`Arc`] and is shared by cloning that `Arc`.
@@ -118,7 +131,8 @@ pub(crate) struct AgentRebuildSpec {
     pub backend_search: bool,
     pub web_fetch_config: WebFetchConfig,
     /// Present only when `Config::jev_enabled()`. Injects `ask_jev` and a Jev client.
-    pub jev_settings: Option<JevSettings>,
+    /// A slot so `/jev-setup` can live-apply without cloning the whole spec.
+    pub jev_settings: JevSettingsSlot,
     pub image_gen_config: ImageGenConfig,
     pub video_gen_config: VideoGenConfig,
     pub app_builder_deployer_config: AppBuilderDeployerConfig,
@@ -325,7 +339,7 @@ impl AgentRebuildSpec {
         .with_video_gen_config(video_gen_config.clone())
         .with_app_builder_deployer_config(app_builder_deployer_config.clone())
         .with_web_fetch_config(web_fetch_config.clone())
-        .with_jev_settings(jev_settings.clone())
+        .with_jev_settings(jev_settings.get())
         .with_write_file_enabled(*write_file_enabled)
         .with_active_agent_messages_enabled(active_agent_messages_enabled)
         .with_fs(fs_backend.clone())
@@ -516,7 +530,7 @@ pub(crate) fn test_rebuild_spec_default() -> Arc<AgentRebuildSpec> {
         web_search_domains: None,
         backend_search: false,
         web_fetch_config: WebFetchConfig::Disabled,
-        jev_settings: None,
+        jev_settings: JevSettingsSlot::new(None),
         image_gen_config: ImageGenConfig::default(),
         video_gen_config: VideoGenConfig::default(),
         app_builder_deployer_config: AppBuilderDeployerConfig::default(),

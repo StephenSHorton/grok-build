@@ -181,6 +181,8 @@ impl AgentView {
             dock_hidden: false,
             prompt_mode: PromptMode::Normal,
             prompt_input_mode: PromptInputMode::Normal,
+            jev_setup_force: false,
+            jev_pending_key: None,
             multiline_mode: false,
             vim_mode: crate::appearance::cache::load_vim_mode(),
             input_mode: InputMode::Vim,
@@ -1288,6 +1290,9 @@ impl AgentView {
     ) {
         use crate::input_log::{ActivePaneSnapshot, OutcomeSnapshot, RawInputEntry};
         use std::time::{SystemTime, UNIX_EPOCH};
+        if self.prompt_input_mode.is_secret() {
+            return;
+        }
         let delta = std::mem::take(&mut self.prompt.last_input_delta);
         let pane = match self.active_pane {
             ActivePane::Scrollback => ActivePaneSnapshot::Scrollback,

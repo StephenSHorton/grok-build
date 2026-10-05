@@ -353,13 +353,19 @@ pub enum PromptInputMode {
     Bash,
     /// Remember mode (`#` prefix): Enter sends `Action::SendRememberNote`.
     Remember,
+    /// `/jev-setup set` masked key prompt. Enter stashes the key on the agent
+    /// and sends `Action::SubmitJevKey` (the key never rides in the Action).
+    JevKey,
 }
 impl PromptInputMode {
+    pub fn is_secret(self) -> bool {
+        matches!(self, PromptInputMode::JevKey)
+    }
     pub fn accent_color(self, theme: &Theme) -> Option<ratatui::style::Color> {
         match self {
             PromptInputMode::Normal => None,
             PromptInputMode::Bash => Some(theme.command),
-            PromptInputMode::Remember => Some(theme.accent_remember),
+            PromptInputMode::Remember | PromptInputMode::JevKey => Some(theme.accent_remember),
         }
     }
     pub fn prefix_override(self, theme: &Theme) -> Option<(&'static str, ratatui::style::Color)> {
@@ -367,6 +373,7 @@ impl PromptInputMode {
             PromptInputMode::Normal => None,
             PromptInputMode::Bash => Some(("! ", theme.command)),
             PromptInputMode::Remember => Some(("# ", theme.accent_remember)),
+            PromptInputMode::JevKey => Some(("key ", theme.accent_remember)),
         }
     }
     pub fn placeholder_override(self, multiline: bool) -> Option<&'static str> {
@@ -379,6 +386,7 @@ impl PromptInputMode {
                     Some("Save a memory note... (Shift+Enter for multiline)")
                 }
             }
+            PromptInputMode::JevKey => Some("Jev API key (masked, Enter to save, Esc to cancel)"),
         }
     }
     pub fn prompt_info_override(self) -> Option<&'static str> {
@@ -386,6 +394,7 @@ impl PromptInputMode {
             PromptInputMode::Normal => None,
             PromptInputMode::Bash => Some("Run shell command"),
             PromptInputMode::Remember => Some("Save memory note"),
+            PromptInputMode::JevKey => Some("Jev API key (masked)"),
         }
     }
     pub fn send_action(self, text: String) -> Action {
@@ -393,12 +402,15 @@ impl PromptInputMode {
             PromptInputMode::Normal => Action::SendPrompt(text),
             PromptInputMode::Bash => Action::SendBashCommand(text),
             PromptInputMode::Remember => Action::SendRememberNote(text),
+            // The real send path stashes the key on AgentView first. This
+            // fallback must not put the secret on the Action.
+            PromptInputMode::JevKey => Action::SubmitJevKey { force: false },
         }
     }
     pub fn is_exit_key(self, key: &KeyEvent) -> bool {
         match self {
             PromptInputMode::Normal => false,
-            PromptInputMode::Bash | PromptInputMode::Remember => {
+            PromptInputMode::Bash | PromptInputMode::Remember | PromptInputMode::JevKey => {
                 let ctrl_w = key!('w', CONTROL).matches(key);
                 let ctrl_u = key!('u', CONTROL).matches(key);
                 let ctrl_c = key!('c', CONTROL).matches(key);
@@ -843,8 +855,12 @@ pub struct AgentView {
     pub dock_hidden: bool,
     /// Current mode of the prompt widget (normal vs editing a queued prompt).
     pub prompt_mode: PromptMode,
-    /// Current special prompt input mode (Normal/Bash/Remember).
+    /// Current special prompt input mode (Normal/Bash/Remember/JevKey).
     pub prompt_input_mode: PromptInputMode,
+    /// `/jev-setup set --force` was used to enter key mode.
+    pub jev_setup_force: bool,
+    /// Key typed in the masked prompt. Taken by `SubmitJevKey`; never placed on Action.
+    pub(crate) jev_pending_key: Option<String>,
     /// Multiline input mode: swap Enter (insert newline) and Shift+Enter (send).
     /// Toggled by `Ctrl+M` or `/multiline`. Not persisted across sessions.
     pub multiline_mode: bool,
@@ -3447,6 +3463,10 @@ mod prompt_input_mode_tests {
             PromptInputMode::Remember.accent_color(&theme),
             Some(theme.accent_remember)
         );
+        assert_eq!(
+            PromptInputMode::JevKey.accent_color(&theme),
+            Some(theme.accent_remember)
+        );
     }
     #[test]
     fn prefix_override_returns_expected_for_each_variant() {
@@ -3459,6 +3479,10 @@ mod prompt_input_mode_tests {
         assert_eq!(
             PromptInputMode::Remember.prefix_override(&theme),
             Some(("# ", theme.accent_remember))
+        );
+        assert_eq!(
+            PromptInputMode::JevKey.prefix_override(&theme),
+            Some(("key ", theme.accent_remember))
         );
     }
     #[test]
@@ -3475,6 +3499,10 @@ mod prompt_input_mode_tests {
             PromptInputMode::Remember.placeholder_override(true),
             Some("Save a memory note... (Enter for newline, Shift+Enter to save)")
         );
+        assert_eq!(
+            PromptInputMode::JevKey.placeholder_override(false),
+            Some("Jev API key (masked, Enter to save, Esc to cancel)")
+        );
     }
     #[test]
     fn prompt_info_override_returns_expected_for_each_variant() {
@@ -3486,6 +3514,10 @@ mod prompt_input_mode_tests {
         assert_eq!(
             PromptInputMode::Remember.prompt_info_override(),
             Some("Save memory note")
+        );
+        assert_eq!(
+            PromptInputMode::JevKey.prompt_info_override(),
+            Some("Jev API key (masked)")
         );
     }
     #[test]
@@ -3505,6 +3537,14 @@ mod prompt_input_mode_tests {
             PromptInputMode::Remember.send_action(t4.clone()),
             Action::SendRememberNote(t) if t == t4
         ));
+        let secret = "jv_live_must_not_appear".to_string();
+        let action = PromptInputMode::JevKey.send_action(secret.clone());
+        assert!(matches!(action, Action::SubmitJevKey { force: false }));
+        let debug = format!("{action:?}");
+        assert!(
+            !debug.contains("jv_live_must_not_appear"),
+            "send_action must not put the key on Action: {debug}"
+        );
     }
     #[test]
     fn is_exit_key_normal_never_exits() {
@@ -3519,7 +3559,11 @@ mod prompt_input_mode_tests {
     }
     #[test]
     fn is_exit_key_bash_and_remember_share_full_exit_set() {
-        for mode in [PromptInputMode::Bash, PromptInputMode::Remember] {
+        for mode in [
+            PromptInputMode::Bash,
+            PromptInputMode::Remember,
+            PromptInputMode::JevKey,
+        ] {
             assert!(mode.is_exit_key(&KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE)));
             assert!(mode.is_exit_key(&KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)));
             assert!(mode.is_exit_key(&KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL)));

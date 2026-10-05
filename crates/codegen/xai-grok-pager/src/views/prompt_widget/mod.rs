@@ -50,6 +50,21 @@ const PASTE_CHIP_DISPLAY_BYTES: usize = 10_000;
 
 pub use crate::prompt_images::PROMPT_IMAGES_TRACING_TARGET;
 
+/// Overwrite typed characters in the textarea area so a secret never paints.
+/// API keys are ASCII; each non-space cell becomes `*`.
+fn mask_textarea_cells(buf: &mut Buffer, area: Rect) {
+    for y in area.top()..area.bottom() {
+        for x in area.left()..area.right() {
+            if let Some(cell) = buf.cell_mut((x, y)) {
+                let symbol = cell.symbol();
+                if !symbol.trim().is_empty() {
+                    cell.set_symbol("*");
+                }
+            }
+        }
+    }
+}
+
 fn text_without_image_chips(
     text: &str,
     elements: impl Iterator<Item = (ElementKind, std::ops::Range<usize>)>,
@@ -660,6 +675,8 @@ pub struct PromptWidget {
     /// Per-frame gate for the prompt-suggestion ghost, set by `AgentView` before each draw or key dispatch.
     /// False while a turn is running, in bash/remember input modes, or while editing a queued prompt.
     pub(crate) prompt_suggestion_active: bool,
+    /// Paint typed characters as `*` (Jev key prompt). The real text stays in the textarea.
+    pub mask_input: bool,
 
     /// Images attached to the current prompt.
     pub images: Vec<PastedImage>,
@@ -730,6 +747,7 @@ impl PromptWidget {
             suggestions: SuggestionController::new(),
             prompt_suggestion: crate::views::prompt_suggestion::PromptSuggestionController::new(),
             prompt_suggestion_active: false,
+            mask_input: false,
             images: Vec::new(),
             image_undo_stash: Vec::new(),
             hovered_image_element_id: None,
@@ -3121,6 +3139,9 @@ impl PromptWidget {
         self.textarea_area = ta_area;
 
         (&self.textarea).render_ref(ta_area, buf, &mut self.textarea_state);
+        if self.mask_input {
+            mask_textarea_cells(buf, ta_area);
+        }
 
         // Chip bg remap (see `PromptBg::Panel`): chip `Line`s bake in `paste_bg` at paste time
         // The same element can render on multiple surfaces, so restyle at paint time

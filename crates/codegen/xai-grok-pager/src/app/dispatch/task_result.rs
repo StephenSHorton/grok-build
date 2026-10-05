@@ -2278,5 +2278,10 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
         TaskResult::FeatureOverridePersisted { feature, result } => {
             settings::handle_feature_override_persisted(app, feature, result)
         }
+        TaskResult::JevSetupComplete {
+            agent_id,
+            message,
+            apply,
+        } => super::jev_setup::handle_jev_setup_complete(app, agent_id, message, apply),
     }
 }

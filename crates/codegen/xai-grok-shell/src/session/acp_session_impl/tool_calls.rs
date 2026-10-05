@@ -3395,7 +3395,7 @@ impl SessionActor {
         let settings = self
             .rebuild_spec
             .jev_settings
-            .as_ref()
+            .get()
             .filter(|settings| settings.safety_active())?;
         if !xai_grok_tools::jev_safety_applies(access_kind) {
             return None;
@@ -3409,7 +3409,7 @@ impl SessionActor {
         };
         let args = raw_input.to_string();
         xai_grok_tools::implementations::grok_build::maybe_risk_check(
-            Some(settings),
+            Some(&settings),
             client.as_ref(),
             tool_name,
             &args,

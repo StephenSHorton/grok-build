@@ -1125,6 +1125,8 @@ fn dispatch_inner(action: Action, app: &mut AppView) -> Vec<Effect> {
             trace,
         } => dispatch_send_feedback(app, text, images, trace),
         Action::EnterRememberMode => dispatch_enter_remember_mode(app),
+        Action::EnterJevKeyMode { force } => super::jev_setup::dispatch_enter_jev_key_mode(app, force),
+        Action::SubmitJevKey { force } => super::jev_setup::dispatch_submit_jev_key(app, force),
         Action::SendRememberNote(text) => dispatch_send_remember_note(app, text),
         Action::SaveRememberNoteFromModal => dispatch_save_remember_note_from_modal(app),
         Action::SendBtw { question, images } => dispatch_send_btw(app, question, images),
