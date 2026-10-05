@@ -5,10 +5,8 @@
 
 use std::path::Path;
 
-use xai_grok_config_types::{
-    JEV_API_KEY_ENV, TYPESAFE_API_KEY_ENV, jev_key, resolve_jev_key,
-};
 pub use xai_grok_config_types::JevConfig;
+use xai_grok_config_types::{JEV_API_KEY_ENV, TYPESAFE_API_KEY_ENV, jev_key, resolve_jev_key};
 
 /// Where the live key came from. Env always beats the file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,8 +46,12 @@ impl JevFlag {
 
     pub fn explain(self) -> &'static str {
         match self {
-            Self::Nudge => "after successful edits/shells, a reminder may suggest ask_jev (no extra Jev call)",
-            Self::SafetyCheck => "a deny after bash/edit/write/MCP/apply_patch means Jev judged the call destructive",
+            Self::Nudge => {
+                "after successful edits/shells, a reminder may suggest ask_jev (no extra Jev call)"
+            }
+            Self::SafetyCheck => {
+                "a deny after bash/edit/write/MCP/apply_patch means Jev judged the call destructive"
+            }
             Self::ContextFilter => "older tool results may be omitted from the next request",
         }
     }
@@ -97,9 +99,14 @@ pub enum JevSetupRequest {
         force: bool,
     },
     Off,
-    Flag { flag: JevFlag, on: bool },
+    Flag {
+        flag: JevFlag,
+        on: bool,
+    },
     /// Re-apply the current file/env settings to this session.
     Apply,
+    /// Session + all-time Decide metrics (`/jev-stats` is the dedicated command).
+    Stats,
     Help,
 }
 
@@ -185,13 +192,11 @@ pub fn collect_status_from_file(file: &JevConfig) -> JevSetupStatus {
 }
 
 pub fn format_status(status: &JevSetupStatus) -> String {
-    let mut lines = vec![
-        format!(
-            "Jev: {} (key from {})",
-            if status.enabled { "on" } else { "off" },
-            status.source.label()
-        ),
-    ];
+    let mut lines = vec![format!(
+        "Jev: {} (key from {})",
+        if status.enabled { "on" } else { "off" },
+        status.source.label()
+    )];
     if let Some(masked) = &status.masked_live_key {
         lines.push(format!("Live key: {masked}"));
     }
@@ -243,7 +248,8 @@ pub fn format_help() -> String {
 /jev-setup nudge on|off
 /jev-setup safety on|off
 /jev-setup filter on|off
-/jev-setup apply        try to turn Jev on in this session"
+/jev-setup apply        try to turn Jev on in this session
+/jev-setup stats        Decide latency / tokens / outcomes (same as /jev-stats)"
         .to_string()
 }
 
@@ -260,6 +266,9 @@ pub fn parse_args(args: &str) -> Result<JevSetupRequest, String> {
     }
     if trimmed == "apply" {
         return Ok(JevSetupRequest::Apply);
+    }
+    if matches!(trimmed, "stats" | "stat" | "metrics") {
+        return Ok(JevSetupRequest::Stats);
     }
     let mut parts = trimmed.split_whitespace();
     let Some(head) = parts.next() else {
@@ -285,16 +294,10 @@ pub fn parse_args(args: &str) -> Result<JevSetupRequest, String> {
             Some(v) if matches!(v.as_str(), "on" | "true" | "1" | "yes") => true,
             Some(v) if matches!(v.as_str(), "off" | "false" | "0" | "no") => false,
             Some(_) => {
-                return Err(format!(
-                    "Usage: /jev-setup {} on|off",
-                    flag.name()
-                ));
+                return Err(format!("Usage: /jev-setup {} on|off", flag.name()));
             }
             None => {
-                return Err(format!(
-                    "Usage: /jev-setup {} on|off",
-                    flag.name()
-                ));
+                return Err(format!("Usage: /jev-setup {} on|off", flag.name()));
             }
         };
         if parts.next().is_some() {
@@ -304,32 +307,62 @@ pub fn parse_args(args: &str) -> Result<JevSetupRequest, String> {
     }
     Err(format!(
         "Unknown /jev-setup argument. {}",
-        format_help().lines().next().unwrap_or("See /jev-setup help")
+        format_help()
+            .lines()
+            .next()
+            .unwrap_or("See /jev-setup help")
     ))
 }
 
 /// Tiny live Decide. Does not fabricate an answer; a transport/HTTP error is a failed ping.
 pub async fn validate_key(api_key: &str) -> Result<(), String> {
+    validate_key_recorded(api_key).await.0
+}
+
+/// [`validate_key`] plus a Decide record when HTTP was attempted.
+pub async fn validate_key_recorded(
+    api_key: &str,
+) -> (Result<(), String>, Option<xai_grok_jev::DecideRecord>) {
     let key = api_key.trim();
     if key.is_empty() {
-        return Err("Key is empty.".to_string());
+        return (Err("Key is empty.".to_string()), None);
     }
-    let client = xai_grok_jev::Client::new(key).map_err(|err| scrub_key(&err.to_string(), key))?;
+    let client = match xai_grok_jev::Client::new(key) {
+        Ok(client) => client,
+        Err(err) => return (Err(scrub_key(&err.to_string(), key)), None),
+    };
     let mut questions = std::collections::BTreeMap::new();
     questions.insert(
         "ping".to_string(),
         xai_grok_jev::noul_q("Is 1 less than 2?"),
     );
-    match client
-        .decide(&serde_json::json!({"setup":"ping"}), &questions)
-        .await
-    {
+    let (result, record) = client
+        .decide_timed(
+            &serde_json::json!({"setup":"ping"}),
+            &questions,
+            xai_grok_jev::DecideSource::Setup,
+        )
+        .await;
+    let outcome = match result {
         Ok(_) => Ok(()),
         Err(err) => Err(format!(
             "Decide ping failed: {}",
             scrub_key(&err.to_string(), key)
         )),
-    }
+    };
+    (outcome, Some(record))
+}
+
+/// `{GROK_HOME}/jev_stats.jsonl`. The file is created only when a record is appended.
+pub fn jev_stats_log_path() -> std::path::PathBuf {
+    xai_dirs::resolve_grok_home()
+        .unwrap_or_else(crate::util::grok_home::grok_home)
+        .join(xai_grok_jev::STATS_LOG_NAME)
+}
+
+/// Append one Decide record to the rolling local log. No-op of contents; sizes only.
+pub fn persist_jev_decide_record(record: &xai_grok_jev::DecideRecord) {
+    let _ = xai_grok_jev::append_decide_log(&jev_stats_log_path(), record);
 }
 
 fn jev_table<'a>(doc: &'a mut toml_edit::DocumentMut) -> &'a mut toml_edit::Table {
@@ -344,11 +377,7 @@ fn jev_table<'a>(doc: &'a mut toml_edit::DocumentMut) -> &'a mut toml_edit::Tabl
 }
 
 /// Replace a `[jev]` value without dropping key prefix comments.
-fn assign_jev_value(
-    table: &mut toml_edit::Table,
-    key: &str,
-    value: impl Into<toml_edit::Value>,
-) {
+fn assign_jev_value(table: &mut toml_edit::Table, key: &str, value: impl Into<toml_edit::Value>) {
     let value = value.into();
     if let Some(existing) = table.get_mut(key).and_then(|item| item.as_value_mut()) {
         *existing = value;
@@ -393,8 +422,7 @@ fn edit_jev_document(
     edit: impl FnOnce(&mut toml_edit::DocumentMut) -> Result<(), String>,
 ) -> Result<(), String> {
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|err| format!("create config dir: {err}"))?;
+        std::fs::create_dir_all(parent).map_err(|err| format!("create config dir: {err}"))?;
     }
     let original = match std::fs::read_to_string(path) {
         Ok(s) => s,
@@ -501,6 +529,7 @@ mod tests {
     #[test]
     fn parse_args_covers_verbs() {
         assert_eq!(parse_args("").unwrap(), JevSetupRequest::Status);
+        assert_eq!(parse_args("stats").unwrap(), JevSetupRequest::Stats);
         assert_eq!(parse_args("off").unwrap(), JevSetupRequest::Off);
         assert_eq!(
             parse_args("set").unwrap(),

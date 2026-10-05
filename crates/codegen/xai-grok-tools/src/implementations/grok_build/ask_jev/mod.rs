@@ -6,11 +6,11 @@
 
 use std::collections::BTreeMap;
 
-use xai_grok_jev::{AskResult, Query, ask, ask_failed, validate_queries};
+use xai_grok_jev::{AskResult, Query, ask_failed, ask_recorded, validate_queries};
 
 pub use xai_grok_jev::{
-    Client as JevClient, SafetyVerdict, Settings as JevSettings, maybe_keep_snippet,
-    maybe_risk_check,
+    Client as JevClient, DecideRecord, JevMetrics, SafetyVerdict, Settings as JevSettings,
+    maybe_keep_snippet, maybe_keep_snippet_recorded, maybe_risk_check, maybe_risk_check_recorded,
 };
 
 use crate::types::output::ToolOutput;
@@ -134,7 +134,16 @@ impl xai_tool_runtime::Tool for AskJevTool {
         };
 
         let result = match client {
-            Some(client) => ask(&client, &input.state, &queries).await,
+            Some(client) => {
+                let (result, record) = ask_recorded(&client, &input.state, &queries).await;
+                {
+                    let mut res = resources.lock().await;
+                    if let Some(metrics) = res.get_mut::<JevMetrics>() {
+                        metrics.record(record);
+                    }
+                }
+                result
+            }
             None => ask_failed(&queries, "jev client is not wired"),
         };
         Ok(ask_result_output(result))
@@ -325,5 +334,54 @@ mod tests {
         assert!(!value["error"].as_str().unwrap_or("").is_empty());
         assert_eq!(value["answers"]["ok"]["detail"], FAILED_DETAIL);
         assert!(value["answers"]["ok"].get("value").is_none());
+    }
+
+    #[tokio::test]
+    async fn live_call_records_metrics_without_changing_payload() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "model": "jev-1.x",
+                "answers": {
+                    "ok": {"type": "noul", "noul": 0.4}
+                },
+                "usage": {"input_tokens": 5, "output_tokens": 1}
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let mut client = xai_grok_jev::Client::new("k").unwrap();
+        client.base_url = Some(server.uri());
+        let mut resources = Resources::new();
+        resources.insert(client);
+        resources.insert(xai_grok_jev::JevMetrics::session_only());
+        let shared = resources.into_shared();
+        let output = xai_tool_runtime::Tool::run(
+            &AskJevTool,
+            test_ctx_with_call_id(shared.clone(), "t"),
+            AskJevInput {
+                state: json!({"file": "a.rs"}),
+                questions: vec![q("ok", "fixed?", "boolean")],
+            },
+        )
+        .await
+        .expect("live call");
+        let value = dynamic_value(output);
+        assert_eq!(value["source"], "live");
+        assert!(value.get("latency_ms").is_none());
+        let guard = shared.lock().await;
+        let metrics = guard.get::<xai_grok_jev::JevMetrics>().expect("metrics");
+        assert_eq!(metrics.session().total.calls, 1);
+        assert_eq!(metrics.session().total.ok, 1);
+        assert_eq!(metrics.session().total.input_tokens, 5);
+        assert_eq!(
+            metrics
+                .session()
+                .by_source
+                .get(&xai_grok_jev::DecideSource::AskJev)
+                .map(|s| s.calls),
+            Some(1)
+        );
     }
 }

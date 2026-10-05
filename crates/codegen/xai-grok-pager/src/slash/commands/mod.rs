@@ -31,8 +31,9 @@ pub mod home;
 pub mod imagine;
 pub mod imagine_video;
 pub mod import_claude;
-pub mod jump;
 pub mod jev_setup;
+pub mod jev_stats;
+pub mod jump;
 pub mod login;
 pub mod logout;
 pub mod loop_cmd;
@@ -106,6 +107,7 @@ pub fn builtin_commands() -> Vec<Arc<dyn SlashCommand>> {
         Arc::new(rewind::RewindCommand),
         Arc::new(jump::JumpCommand),
         Arc::new(jev_setup::JevSetupCommand),
+        Arc::new(jev_stats::JevStatsCommand),
         Arc::new(expand::ExpandCommand),
         Arc::new(edit_prompt::EditPromptCommand),
         Arc::new(queue::QueueCommand),

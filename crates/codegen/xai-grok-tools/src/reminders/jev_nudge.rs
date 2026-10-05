@@ -58,6 +58,9 @@ impl Reminder for JevNudgeReminder {
         if every == 0 || state.successful_mutates % every != 0 {
             return Vec::new();
         }
+        if let Some(metrics) = res.get_mut::<xai_grok_jev::JevMetrics>() {
+            metrics.record_nudge_shown();
+        }
         vec![JEV_NUDGE_TEXT.to_owned()]
     }
 }
@@ -195,6 +198,22 @@ mod tests {
             files: vec![],
             tool_output_for_prompt: "ok".into(),
         })
+    }
+
+    #[tokio::test]
+    async fn nudge_increments_metrics_when_present() {
+        let mut res = Resources::new();
+        res.insert(JevNudgeConfig { every: 1 });
+        res.insert(xai_grok_jev::JevMetrics::session_only());
+        let shared = res.into_shared();
+        let texts = JevNudgeReminder
+            .collect_reminders(shared.clone(), &edit_ok())
+            .await;
+        assert_eq!(texts, vec![JEV_NUDGE_TEXT.to_owned()]);
+        let guard = shared.lock().await;
+        let metrics = guard.get::<xai_grok_jev::JevMetrics>().expect("metrics");
+        assert_eq!(metrics.session().nudges_shown, 1);
+        assert!(metrics.session().has_nudge_window());
     }
 
     #[tokio::test]

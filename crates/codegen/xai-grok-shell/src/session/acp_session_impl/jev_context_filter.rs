@@ -49,13 +49,22 @@ impl SessionActor {
                 continue;
             }
             calls += 1;
-            let keep = xai_grok_tools::implementations::grok_build::maybe_keep_snippet(
-                Some(&settings),
-                client.as_ref(),
-                &query,
-                snippet,
-            )
-            .await;
+            let (keep, record) =
+                xai_grok_tools::implementations::grok_build::maybe_keep_snippet_recorded(
+                    Some(&settings),
+                    client.as_ref(),
+                    &query,
+                    snippet,
+                )
+                .await;
+            if let Some(record) = record {
+                let mut resources = toolset.resources.lock().await;
+                if let Some(metrics) =
+                    resources.get_mut::<xai_grok_tools::implementations::grok_build::JevMetrics>()
+                {
+                    metrics.record(record);
+                }
+            }
             if !keep {
                 *snippet = std::sync::Arc::<str>::from(JEV_FILTER_PLACEHOLDER);
             }

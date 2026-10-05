@@ -55,6 +55,7 @@ fn parse_args_debug_never_includes_raw_key() {
     }
     let debug = format!("{:?}", parse_args("set jv_live_abc").unwrap());
     assert!(!debug.contains("jv_live_abc"), "{debug}");
+    assert_eq!(parse_args("stats").unwrap(), JevSetupRequest::Stats);
 }
 
 #[test]

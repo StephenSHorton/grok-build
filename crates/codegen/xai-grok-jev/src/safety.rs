@@ -6,6 +6,7 @@
 use std::collections::BTreeMap;
 
 use crate::client::{Client, Settings};
+use crate::metrics::{DecideRecord, DecideSource, SafetyOutcome};
 use crate::types::{Question, decode_noul, noul_q};
 
 /// Rock default `RiskBlock`.
@@ -66,6 +67,19 @@ pub async fn risk_check(
     risk_block: f64,
     allow_destructive: bool,
 ) -> SafetyVerdict {
+    risk_check_recorded(client, tool, args, risk_block, allow_destructive)
+        .await
+        .0
+}
+
+/// [`risk_check`] plus a Decide record. Fail-open Allow is still recorded.
+pub async fn risk_check_recorded(
+    client: &Client,
+    tool: &str,
+    args: &str,
+    risk_block: f64,
+    allow_destructive: bool,
+) -> (SafetyVerdict, DecideRecord) {
     let threshold = if risk_block > 0.0 {
         risk_block
     } else {
@@ -77,23 +91,34 @@ pub async fn risk_check(
         "tool": tool,
         "args": clip_args(args),
     });
-    let Ok(response) = client.decide(&state, &questions).await else {
-        return SafetyVerdict::Allow;
+    let (response, mut record) = client
+        .decide_timed(&state, &questions, DecideSource::Safety)
+        .await;
+    let (verdict, safety) = match response {
+        Err(_) => (SafetyVerdict::Allow, SafetyOutcome::Allowed { noul: None }),
+        Ok(response) => match response
+            .answers
+            .get(RISK_ANSWER_NAME)
+            .and_then(|raw| decode_noul(raw).ok())
+        {
+            None => (SafetyVerdict::Allow, SafetyOutcome::Allowed { noul: None }),
+            Some(noul) if !allow_destructive && noul.noul >= threshold => (
+                SafetyVerdict::Deny {
+                    noul: noul.noul,
+                    threshold,
+                },
+                SafetyOutcome::Denied { noul: noul.noul },
+            ),
+            Some(noul) => (
+                SafetyVerdict::Allow,
+                SafetyOutcome::Allowed {
+                    noul: Some(noul.noul),
+                },
+            ),
+        },
     };
-    let Some(raw) = response.answers.get(RISK_ANSWER_NAME) else {
-        return SafetyVerdict::Allow;
-    };
-    let Ok(noul) = decode_noul(raw) else {
-        return SafetyVerdict::Allow;
-    };
-    if !allow_destructive && noul.noul >= threshold {
-        SafetyVerdict::Deny {
-            noul: noul.noul,
-            threshold,
-        }
-    } else {
-        SafetyVerdict::Allow
-    }
+    record = record.with_safety(safety);
+    (verdict, record)
 }
 
 /// No-op when the flag is off, no key, or the client is missing. Never fabricates a deny.
@@ -103,20 +128,33 @@ pub async fn maybe_risk_check(
     tool: &str,
     args: &str,
 ) -> SafetyVerdict {
+    maybe_risk_check_recorded(settings, client, tool, args)
+        .await
+        .0
+}
+
+/// [`maybe_risk_check`] plus a record when a Decide actually ran. Flag-off is `(Allow, None)`.
+pub async fn maybe_risk_check_recorded(
+    settings: Option<&Settings>,
+    client: Option<&Client>,
+    tool: &str,
+    args: &str,
+) -> (SafetyVerdict, Option<DecideRecord>) {
     let Some(settings) = settings.filter(|s| s.safety_active()) else {
-        return SafetyVerdict::Allow;
+        return (SafetyVerdict::Allow, None);
     };
     let Some(client) = client else {
-        return SafetyVerdict::Allow;
+        return (SafetyVerdict::Allow, None);
     };
-    risk_check(
+    let (verdict, record) = risk_check_recorded(
         client,
         tool,
         args,
         settings.risk_block_or_default(),
         settings.allow_destructive,
     )
-    .await
+    .await;
+    (verdict, Some(record))
 }
 
 #[cfg(test)]

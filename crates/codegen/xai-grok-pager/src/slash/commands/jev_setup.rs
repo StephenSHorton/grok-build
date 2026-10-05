@@ -17,7 +17,7 @@ impl SlashCommand for JevSetupCommand {
     slash_meta! {
         name: "jev-setup",
         description: "Enable Jev, set or remove the key, and toggle extras",
-        usage: "/jev-setup [status|set [--force]|off|nudge on|off|safety on|off|filter on|off|apply]",
+        usage: "/jev-setup [status|set [--force]|off|nudge on|off|safety on|off|filter on|off|apply|stats]",
         takes_args: true,
     }
 
@@ -34,6 +34,7 @@ impl SlashCommand for JevSetupCommand {
             arg("filter on", "Omit older tool results Jev says are stale"),
             arg("filter off", "Turn the context filter off"),
             arg("apply", "Turn Jev on in this session if idle"),
+            arg("stats", "Decide latency, tokens, and outcomes"),
             arg("help", "Show usage"),
         ])
     }
@@ -69,6 +70,9 @@ impl SlashCommand for JevSetupCommand {
             )),
             Ok(JevSetupRequest::Apply) => {
                 CommandResult::QueueCommand("/jev-setup apply".to_string())
+            }
+            Ok(JevSetupRequest::Stats) => {
+                CommandResult::QueueCommand("/jev-setup stats".to_string())
             }
             Err(err) => CommandResult::Error(format!("{err}\n\n{}", format_help())),
         }
@@ -156,6 +160,10 @@ mod tests {
         assert!(matches!(
             run("apply"),
             CommandResult::QueueCommand(cmd) if cmd == "/jev-setup apply"
+        ));
+        assert!(matches!(
+            run("stats"),
+            CommandResult::QueueCommand(cmd) if cmd == "/jev-setup stats"
         ));
     }
 }

@@ -1983,6 +1983,8 @@ impl SessionActor {
                 Decision::Allow | Decision::Ask => {}
             }
         }
+        self.observe_jev_nudge_followthrough(&call.function.name)
+            .await;
         if let Some(message) = self
             .maybe_jev_safety_block(&access_kind, &call.function.name, &raw_input)
             .await
@@ -3408,14 +3410,37 @@ impl SessionActor {
                 .cloned()
         };
         let args = raw_input.to_string();
-        xai_grok_tools::implementations::grok_build::maybe_risk_check(
-            Some(&settings),
-            client.as_ref(),
-            tool_name,
-            &args,
-        )
-        .await
-        .deny_detail()
+        let (verdict, record) =
+            xai_grok_tools::implementations::grok_build::maybe_risk_check_recorded(
+                Some(&settings),
+                client.as_ref(),
+                tool_name,
+                &args,
+            )
+            .await;
+        if let Some(record) = record {
+            let mut resources = toolset.resources.lock().await;
+            if let Some(metrics) =
+                resources.get_mut::<xai_grok_tools::implementations::grok_build::JevMetrics>()
+            {
+                metrics.record(record);
+            }
+        }
+        verdict.deny_detail()
+    }
+
+    async fn observe_jev_nudge_followthrough(&self, tool_name: &str) {
+        let toolset = self.tool_bridge_handle().toolset();
+        let mut resources = toolset.resources.lock().await;
+        let Some(metrics) =
+            resources.get_mut::<xai_grok_tools::implementations::grok_build::JevMetrics>()
+        else {
+            return;
+        };
+        if !metrics.session().has_nudge_window() {
+            return;
+        }
+        metrics.observe_tool_call(tool_name);
     }
 
     pub(super) async fn handle_tool_not_executed(

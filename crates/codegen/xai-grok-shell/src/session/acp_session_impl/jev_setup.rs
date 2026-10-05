@@ -5,9 +5,12 @@ use crate::sampling::ConversationItem;
 use crate::session::commands::AdvertiseTrigger;
 use crate::util::config::{
     JevFlag, JevSetupRequest, clear_user_api_key, collect_status_from_file, env_key_is_live,
-    format_help, format_status, save_user_api_key, set_user_flag, validate_key,
+    format_help, format_status, jev_stats_log_path, save_user_api_key, set_user_flag,
+    validate_key_recorded,
 };
-use xai_grok_tools::implementations::grok_build::{ASK_JEV_TOOL_NAME, AskJevTool, JevClient};
+use xai_grok_tools::implementations::grok_build::{
+    ASK_JEV_TOOL_NAME, AskJevTool, JevClient, JevMetrics,
+};
 
 impl SessionActor {
     pub(super) async fn execute_jev_setup(
@@ -52,6 +55,28 @@ impl SessionActor {
                 Err(err) => err,
             },
             JevSetupRequest::Apply => self.apply_jev_settings_to_session().await,
+            JevSetupRequest::Stats => self.execute_jev_stats().await,
+        }
+    }
+
+    pub(super) async fn execute_jev_stats(&self) -> String {
+        let jev_on = self
+            .rebuild_spec
+            .jev_settings
+            .get()
+            .is_some_and(|s| s.is_enabled());
+        let toolset = self.tool_bridge_handle().toolset();
+        let resources = toolset.resources.lock().await;
+        if let Some(metrics) = resources.get::<JevMetrics>() {
+            metrics.format_report(jev_on)
+        } else {
+            let all_time =
+                xai_grok_jev::load_all_time(&jev_stats_log_path()).filter(|acc| !acc.is_empty());
+            xai_grok_jev::format_stats_report(
+                &xai_grok_jev::StatsAccumulator::default(),
+                all_time.as_ref(),
+                jev_on,
+            )
         }
     }
 
@@ -67,9 +92,16 @@ impl SessionActor {
         if key.trim().is_empty() {
             return "Refusing to save an empty key.".to_string();
         }
-        match validate_key(key).await {
-            Ok(()) => {}
-            Err(err) if force => {
+        match validate_key_recorded(key).await {
+            (Ok(()), record) => {
+                if let Some(record) = record {
+                    self.record_jev_decide(record).await;
+                }
+            }
+            (Err(err), record) if force => {
+                if let Some(record) = record {
+                    self.record_jev_decide(record).await;
+                }
                 if let Err(save_err) = save_user_api_key(key).await {
                     return save_err;
                 }
@@ -80,7 +112,10 @@ impl SessionActor {
                     "Saved [jev].api_key even though validation failed:\n{err}\n\n{apply}"
                 );
             }
-            Err(err) => {
+            (Err(err), record) => {
+                if let Some(record) = record {
+                    self.record_jev_decide(record).await;
+                }
                 return format!(
                     "{err}\nNot saved. Re-run with --force if you want to store this key anyway."
                 );
@@ -263,8 +298,21 @@ impl SessionActor {
                         resources.remove::<xai_grok_tools::reminders::JevNudgeConfig>();
                     }
                 }
+                sync_jev_metrics_resource(resources, enabled);
             })
             .await;
+    }
+
+    async fn record_jev_decide(&self, record: xai_grok_jev::DecideRecord) {
+        let toolset = self.tool_bridge_handle().toolset();
+        let mut resources = toolset.resources.lock().await;
+        if let Some(metrics) = resources.get_mut::<JevMetrics>() {
+            metrics.record(record);
+            return;
+        }
+        let mut metrics = JevMetrics::session_only();
+        metrics.record(record);
+        resources.insert(metrics);
     }
 
     /// Persist the prompt artifacts and swap only the `<jev>` suffix on the
@@ -290,6 +338,23 @@ impl SessionActor {
         };
         let head = xai_grok_agent::PromptContext::splice_jev_section(current_head, jev.as_ref());
         self.chat_state_handle.replace_system_head(&head).await;
+    }
+}
+
+fn sync_jev_metrics_resource(
+    resources: &mut xai_grok_tools::types::resources::Resources,
+    enabled: bool,
+) {
+    let path = jev_stats_log_path();
+    if enabled {
+        if let Some(metrics) = resources.get_mut::<JevMetrics>() {
+            metrics.set_log_path(&path);
+            metrics.set_persist_enabled(true);
+        } else {
+            resources.insert(JevMetrics::with_persist(path));
+        }
+    } else if let Some(metrics) = resources.get_mut::<JevMetrics>() {
+        metrics.set_persist_enabled(false);
     }
 }
 

@@ -15,6 +15,22 @@ Enable Jev from the TUI (or ACP/headless) without editing the file by hand.
 5. Then toggle extras: `/jev-setup nudge on|off`, `safety on|off`, `filter on|off` (one-line explanations in the status text).
 6. `/jev-setup off` removes the file key. If `JEV_API_KEY` / `TYPESAFE_API_KEY` is set, the UI says so — env still wins, so Jev stays on until you unset the env var.
 7. If the session is idle, Jev turns on immediately (`ask_jev` registered, `<jev>` prompt section added). If a turn is running, run `/jev-setup apply` when idle or start a new session.
+8. `/jev-stats` (or `/jev-setup stats`) shows this session’s Decide totals plus all-time totals from a small local log.
+
+## `/jev-stats`
+
+When Jev is on, every Decide is recorded by source (`ask_jev`, safety check, context filter, `/jev-setup` validation):
+
+- latency, success/failure (error kind only — no response bodies)
+- question count and modes
+- input/output tokens from `usage` when the API sends them
+- safety: allowed or denied, plus the live noul
+- filter: kept or dropped, plus estimated chars/tokens saved
+- nudges shown, and whether `ask_jev` followed within the next 5 tool calls
+
+`/jev-stats` prints session totals, a per-source breakdown, p50/p95 latency, failure rate, tokens, filter drop rate, and safety deny count. A rolling JSONL at `$GROK_HOME/jev_stats.jsonl` (capped) holds all-time totals. The log stores **sizes, not contents** — no keys, no state payloads.
+
+No key ⇒ no recorder, no file, no overhead. `/jev-stats` still runs and says Jev is off.
 
 ## Set the key (manual)
 
