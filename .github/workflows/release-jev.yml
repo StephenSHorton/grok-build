@@ -103,12 +103,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          extra=()
+          # macOS /bin/bash 3.2 + set -u treats empty arrays as unbound.
           if [[ "${{ matrix.target }}" == *windows* ]]; then
             # jemalloc deps are unix-only; stock is the supported Windows feature set.
-            extra=(--no-default-features --features stock)
+            cargo build -p xai-grok-pager-bin --release --target "${{ matrix.target }}" \
+              --no-default-features --features stock
+          else
+            cargo build -p xai-grok-pager-bin --release --target "${{ matrix.target }}"
           fi
-          cargo build -p xai-grok-pager-bin --release --target "${{ matrix.target }}" "${extra[@]}"
 
       - name: Stage grok-jev binary
         shell: bash
