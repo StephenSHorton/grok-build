@@ -23,9 +23,11 @@ pub use campaigns::{
 pub use consent::*;
 pub use hints::*;
 pub use jev_setup::{
-    JevFlag, JevKeyArg, JevKeySource, JevSetupRequest, JevSetupStatus, clear_user_api_key,
-    collect_status, collect_status_from_file, env_key_is_live, format_help, format_status, mask_key,
-    parse_args, save_user_api_key, scrub_key, set_user_flag, validate_key,
+    JevConfig, JevFlag, JevKeyArg, JevKeySource, JevSetupRequest, JevSetupStatus,
+    clear_user_api_key,
+    clear_api_key_at, collect_status, collect_status_from_file, env_key_is_live, format_help,
+    format_status, mask_key, parse_args, save_api_key_at, save_user_api_key, scrub_key,
+    set_flag_at, set_user_flag, validate_key,
 };
 pub use load::*;
 pub use mcp::*;

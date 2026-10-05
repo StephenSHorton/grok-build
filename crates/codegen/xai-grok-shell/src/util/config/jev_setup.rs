@@ -6,8 +6,9 @@
 use std::path::Path;
 
 use xai_grok_config_types::{
-    JEV_API_KEY_ENV, JevConfig, TYPESAFE_API_KEY_ENV, jev_key, resolve_jev_key,
+    JEV_API_KEY_ENV, TYPESAFE_API_KEY_ENV, jev_key, resolve_jev_key,
 };
+pub use xai_grok_config_types::JevConfig;
 
 /// Where the live key came from. Env always beats the file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -342,6 +343,20 @@ fn jev_table<'a>(doc: &'a mut toml_edit::DocumentMut) -> &'a mut toml_edit::Tabl
         .expect("jev entry is a table after the guard above")
 }
 
+/// Replace a `[jev]` value without dropping key prefix comments.
+fn assign_jev_value(
+    table: &mut toml_edit::Table,
+    key: &str,
+    value: impl Into<toml_edit::Value>,
+) {
+    let value = value.into();
+    if let Some(existing) = table.get_mut(key).and_then(|item| item.as_value_mut()) {
+        *existing = value;
+        return;
+    }
+    table.insert(key, toml_edit::Item::Value(value));
+}
+
 /// Comment-preserving write of `[jev].api_key`. Creates `[jev]` when missing.
 pub fn save_api_key_at(path: &Path, api_key: &str) -> Result<(), String> {
     let key = api_key.trim();
@@ -349,7 +364,7 @@ pub fn save_api_key_at(path: &Path, api_key: &str) -> Result<(), String> {
         return Err("Refusing to save an empty key.".to_string());
     }
     edit_jev_document(path, |doc| {
-        jev_table(doc).insert("api_key", toml_edit::value(key));
+        assign_jev_value(jev_table(doc), "api_key", key);
         Ok(())
     })
 }
@@ -368,7 +383,7 @@ pub fn clear_api_key_at(path: &Path) -> Result<(), String> {
 
 pub fn set_flag_at(path: &Path, flag: JevFlag, on: bool) -> Result<(), String> {
     edit_jev_document(path, |doc| {
-        jev_table(doc).insert(flag.name(), toml_edit::value(on));
+        assign_jev_value(jev_table(doc), flag.name(), on);
         Ok(())
     })
 }
@@ -437,7 +452,7 @@ mod tests {
 
     #[test]
     fn mask_key_hides_all_but_last_four() {
-        assert_eq!(mask_key("jv_live_abcdefgh"), "••••efgh");
+        assert_eq!(mask_key("jv_live_abcdefgh"), "••••••••efgh");
         assert_eq!(mask_key("abcd"), "••••");
         assert_eq!(mask_key("   "), "(empty)");
         assert!(!mask_key("jv_live_secret_key_value").contains("secret"));
