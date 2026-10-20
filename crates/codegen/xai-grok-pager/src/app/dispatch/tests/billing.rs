@@ -1440,6 +1440,170 @@ fn restricted_command_submit_opens_three_option_upsell() {
     assert_eq!(option_at(q, 2).id.as_deref(), Some(UPSELL_URL_UPGRADE));
 }
 
+fn insert_ollama_fallback(app: &mut AppView, id: AgentId) {
+    let grok_id = acp::ModelId::new(std::sync::Arc::from("grok-4.6"));
+    let ollama_id = acp::ModelId::new(std::sync::Arc::from("ollama/qwen3.8:27b"));
+    let agent = app.agents.get_mut(&id).unwrap();
+    agent.session.models.available.insert(
+        grok_id.clone(),
+        acp::ModelInfo::new(grok_id.clone(), "Grok 4.6".to_string()),
+    );
+    agent.session.models.available.insert(
+        ollama_id.clone(),
+        acp::ModelInfo::new(ollama_id.clone(), "qwen3.8:27b (Ollama)".to_string()).meta(
+            serde_json::json!({
+                "provider": "ollama",
+                "ollamaFallback": true
+            })
+            .as_object()
+            .cloned(),
+        ),
+    );
+    agent.session.models.current = Some(grok_id);
+}
+
+#[test]
+fn free_usage_failsover_to_ollama_instead_of_paywall() {
+    use crate::app::acp_handler::apply_session_event_for_test;
+    use xai_grok_shell::extensions::notification::{RetryState, SessionUpdate};
+
+    let mut app = test_app_with_agent();
+    let id = AgentId(0);
+    insert_ollama_fallback(&mut app, id);
+
+    let effects = dispatch(Action::SendPrompt("draw me a cat".into()), &mut app);
+    assert!(
+        matches!(effects.first(), Some(Effect::SendPrompt { text, .. }) if text == "draw me a cat"),
+        "send must dispatch: {effects:?}"
+    );
+    let prompt_id = test_agent(&app, id).session.current_prompt_id.clone();
+
+    {
+        let agent = app.agents.get_mut(&id).unwrap();
+        apply_session_event_for_test(
+            &SessionUpdate::RetryState(RetryState::Exhausted {
+                attempts: 2,
+                reason: "API error (status 429 Too Many Requests): \
+                         subscription:free-usage-exhausted: You have used all your free usage."
+                    .into(),
+                is_rate_limited: true,
+            }),
+            &mut agent.session,
+            &mut agent.scrollback,
+        );
+        assert!(agent.session.free_usage_blocked);
+        agent.session.in_flight_prompt = Some(test_stashed_prompt("draw me a cat"));
+    }
+
+    let effects = dispatch(
+        Action::TaskComplete(TaskResult::PromptResponse {
+            agent_id: id,
+            result: Err("rate limited".into()),
+            http_status: Some(429),
+            prompt_id,
+        }),
+        &mut app,
+    );
+    assert!(
+        test_agent(&app, id).question_view.is_none(),
+        "paywall must not open when Ollama can take over"
+    );
+    assert!(
+        matches!(
+            effects.first(),
+            Some(Effect::SwitchModel { model_id, .. })
+                if model_id.0.as_ref() == "ollama/qwen3.8:27b"
+        ),
+        "expected SwitchModel to ollama, got {effects:?}"
+    );
+    assert!(
+        test_agent(&app, id)
+            .ollama_fallback_stashed_prompt
+            .as_ref()
+            .is_some_and(|p| p.text == "draw me a cat")
+    );
+}
+
+#[test]
+fn ollama_failover_resubmits_after_switch() {
+    let mut app = test_app_with_agent();
+    let id = AgentId(0);
+    insert_ollama_fallback(&mut app, id);
+    let ollama_id = acp::ModelId::new(std::sync::Arc::from("ollama/qwen3.8:27b"));
+    {
+        let agent = app.agents.get_mut(&id).unwrap();
+        agent.session.model_switch_pending = true;
+        agent.ollama_fallback_stashed_prompt = Some(test_stashed_prompt("draw me a cat"));
+    }
+
+    let effects = dispatch(
+        Action::TaskComplete(TaskResult::SwitchModelComplete {
+            agent_id: id,
+            model_id: ollama_id.clone(),
+            effort: None,
+            result: Ok(()),
+            prev_model_id: Some(acp::ModelId::new(std::sync::Arc::from("grok-4.6"))),
+        }),
+        &mut app,
+    );
+
+    assert_eq!(
+        test_agent(&app, id).session.models.current.as_ref(),
+        Some(&ollama_id)
+    );
+    assert!(
+        test_agent(&app, id)
+            .ollama_fallback_stashed_prompt
+            .is_none()
+    );
+    assert!(
+        effects.iter().any(|effect| matches!(
+            effect,
+            Effect::SendPrompt { text, .. } if text == "draw me a cat"
+        )),
+        "stashed prompt must resubmit after the switch: {effects:?}"
+    );
+}
+
+#[test]
+fn free_usage_still_opens_paywall_without_ollama() {
+    use crate::app::acp_handler::apply_session_event_for_test;
+    use xai_grok_shell::extensions::notification::{RetryState, SessionUpdate};
+
+    let mut app = test_app_with_agent();
+    let id = AgentId(0);
+
+    let _ = dispatch(Action::SendPrompt("draw me a cat".into()), &mut app);
+    let prompt_id = test_agent(&app, id).session.current_prompt_id.clone();
+    {
+        let agent = app.agents.get_mut(&id).unwrap();
+        apply_session_event_for_test(
+            &SessionUpdate::RetryState(RetryState::Exhausted {
+                attempts: 2,
+                reason: "API error (status 429 Too Many Requests): \
+                         subscription:free-usage-exhausted: You have used all your free usage."
+                    .into(),
+                is_rate_limited: true,
+            }),
+            &mut agent.session,
+            &mut agent.scrollback,
+        );
+    }
+    let _ = dispatch(
+        Action::TaskComplete(TaskResult::PromptResponse {
+            agent_id: id,
+            result: Err("rate limited".into()),
+            http_status: Some(429),
+            prompt_id,
+        }),
+        &mut app,
+    );
+    assert!(
+        test_agent(&app, id).question_view.is_some(),
+        "paywall still opens when no Ollama model is in the catalog"
+    );
+}
+
 /// Aliases of a restricted command hit the same upsell (deny-list matching covers aliases via the registry).
 #[test]
 fn restricted_command_alias_also_upsells() {

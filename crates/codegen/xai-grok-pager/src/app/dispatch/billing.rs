@@ -2,7 +2,7 @@
 
 use super::queue::{maybe_drain_queue, note_peek_page_flip};
 use crate::app::actions::Effect;
-use crate::app::agent::AgentId;
+use crate::app::agent::{AgentId, InFlightPrompt};
 use crate::app::agent_view::AgentView;
 use crate::app::app_view::AppView;
 use crate::scrollback::block::RenderBlock;
@@ -181,10 +181,71 @@ pub(super) fn open_credit_limit_upsell(
     agent.prompt.set_text("");
 }
 
+/// If a local Ollama model is in the picker, switch to it and retry the failed prompt instead of opening the SuperGrok paywall.
+/// Returns `Some(effects)` when failover started.
+pub(super) fn try_ollama_usage_failover(
+    agent: &mut AgentView,
+    agent_id: AgentId,
+) -> Option<Vec<Effect>> {
+    if agent.session.models.current_is_ollama() {
+        return None;
+    }
+    let fallback_id = agent.session.models.ollama_fallback_id()?;
+    let session_id = agent.session.session_id.clone()?;
+    let display = agent
+        .session
+        .models
+        .available
+        .get(&fallback_id)
+        .map(|info| info.name.clone())
+        .unwrap_or_else(|| fallback_id.0.to_string());
+
+    if agent.ollama_fallback_stashed_prompt.is_none()
+        && let Some(prompt) = failover_prompt(agent)
+    {
+        agent.ollama_fallback_stashed_prompt = Some(prompt);
+    }
+
+    agent.scrollback.push_block(RenderBlock::system(format!(
+        "Grok usage exhausted. Switching to {display}\u{2026}"
+    )));
+    agent.session.model_switch_pending = true;
+    Some(vec![Effect::SwitchModel {
+        agent_id,
+        session_id,
+        model_id: fallback_id,
+        effort: None,
+        prev_model_id: agent.session.models.current.clone(),
+    }])
+}
+
+pub(in crate::app::dispatch) fn failover_prompt(agent: &AgentView) -> Option<InFlightPrompt> {
+    if let Some(prompt) = agent.session.in_flight_prompt.clone() {
+        return Some(prompt);
+    }
+    if let Some(prompt) = agent.session.compact_held_prompt.clone() {
+        return Some(prompt);
+    }
+    let text = agent.session.prompt_history.first()?.clone();
+    if text.trim().is_empty() {
+        return None;
+    }
+    Some(InFlightPrompt {
+        text,
+        images: Vec::new(),
+        scrollback_entry: crate::scrollback::EntryId::new(0),
+        combined_scrollback_entries: Vec::new(),
+        chip_elements: Vec::new(),
+    })
+}
+
 /// Open the free-usage paywall on the given agent: a Q&A modal in the [`open_credit_limit_upsell`] style with two upgrade options.
 /// Each option's `id` carries its target URL so the submit handler is position-independent.
 /// Only the driver can reach this: the PromptResponse handler calls it, and viewers never receive that response.
-pub(super) fn open_free_usage_upsell(agent: &mut AgentView, auth_method: Option<String>) {
+pub(in crate::app::dispatch) fn open_free_usage_upsell(
+    agent: &mut AgentView,
+    auth_method: Option<String>,
+) {
     open_supergrok_upsell(agent, UpsellReason::FreeUsageLimit, auth_method);
 }
 

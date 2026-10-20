@@ -1910,8 +1910,10 @@ pub(in crate::app::dispatch) fn handle_switch_model_complete(
     result: Result<(), SwitchModelError>,
     prev_model_id: Option<acp::ModelId>,
 ) -> Vec<Effect> {
+    let auth_method = app.login_method_id.as_ref().map(|id| id.0.to_string());
     if let Some(agent) = app.agents.get_mut(&agent_id) {
         agent.session.model_switch_pending = false;
+        let switch_ok = result.is_ok();
         let mut effects = match result {
             Ok(()) => {
                 agent.session.user_model_preference = Some(model_id.clone());
@@ -1955,6 +1957,10 @@ pub(in crate::app::dispatch) fn handle_switch_model_complete(
                     agent.session.models.set_current(prev.clone(), None);
                 }
                 agent.active_modal = None;
+                if agent.ollama_fallback_stashed_prompt.take().is_some() {
+                    crate::app::dispatch::billing::open_free_usage_upsell(agent, auth_method);
+                    return vec![];
+                }
                 let display_name = agent.session.models.display_name_for(&model_id);
                 return open_agent_type_mismatch_question(app, model_id, effort, &display_name);
             }
@@ -1965,6 +1971,17 @@ pub(in crate::app::dispatch) fn handle_switch_model_complete(
                 vec![]
             }
         };
+        if !switch_ok {
+            if agent.ollama_fallback_stashed_prompt.take().is_some() {
+                crate::app::dispatch::billing::open_free_usage_upsell(agent, auth_method);
+            }
+        } else if agent.session.pending_prompts.is_empty() {
+            if let Some(prompt) = agent.ollama_fallback_stashed_prompt.take() {
+                agent.session.enqueue_in_flight_prompt_front(prompt);
+            }
+        } else {
+            agent.ollama_fallback_stashed_prompt = None;
+        }
         let drain = maybe_drain_queue(agent);
         effects.extend(drain.effects);
         note_peek_page_flip(app, agent_id, drain.page_flip_entry);

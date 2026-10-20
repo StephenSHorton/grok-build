@@ -135,6 +135,7 @@ pub(super) fn dispatch_send_prompt_now(
     // dispatch_send_prompt_inner. Drop the credit-limit stash so Try Again
     // cannot resubmit the blocked prompt after the user has moved on.
     agent.credit_limit_stashed_prompt = None;
+    agent.ollama_fallback_stashed_prompt = None;
 
     // Mid-outage guard (mirrors the plain prompt path): the producers already consumed the payload (composer text / queue row)
     // Requeue it locally instead of firing into a dead channel and losing the message

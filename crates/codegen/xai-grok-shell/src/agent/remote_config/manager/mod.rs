@@ -15,6 +15,7 @@ use super::{
     validate_selectable,
 };
 use crate::agent::config::{self, ModelEntry, resolve_credentials, sampling_config_for_model};
+use crate::agent::ollama::{self, OllamaCache};
 use crate::sampling::SamplerConfig as SamplingConfig;
 use xai_grok_login::{AuthManager, GrokAuth, GrokComConfig};
 use xai_grok_sampling_types::{ReasoningEffort, ReasoningEffortOption};
@@ -67,6 +68,8 @@ struct Inner {
     catalog_progress: tokio::sync::watch::Sender<CatalogProgress>,
     /// Set once the user explicitly picks a model (`/model`); guards the first-catalog reselect from clobbering that choice.
     user_selected_model: AtomicBool,
+    /// Last successful (or empty) Ollama probe. Reused on catalog rebuilds so config reloads do not block on HTTP.
+    ollama: RwLock<OllamaCache>,
 }
 
 /// Clears an in-flight flag on drop so a panicking task can't wedge future refreshes.
@@ -216,6 +219,7 @@ impl ModelsManagerBuilder {
                 model_switch_watch: tokio::sync::watch::channel(0u64).0,
                 catalog_progress: tokio::sync::watch::channel(CatalogProgress::Pending).0,
                 user_selected_model: AtomicBool::new(false),
+                ollama: RwLock::new(OllamaCache::default()),
             }),
         }
     }
@@ -300,6 +304,7 @@ impl ModelsManager {
                 .catalog_progress
                 .send_replace(CatalogProgress::Ready);
         }
+        mgr.install_ollama_models();
         Ok(mgr)
     }
 
@@ -367,6 +372,7 @@ impl ModelsManager {
             self.reselect_current_model_if_missing(&new_config);
         }
 
+        self.install_ollama_models();
         self.notify_models_updated();
     }
 
@@ -628,6 +634,7 @@ impl ModelsManager {
 
     fn rebuild(&self, cfg: &config::Config, prefetched: Option<IndexMap<String, ModelEntry>>) {
         self.inner.catalog.write().models = resolve_model_catalog(cfg, prefetched);
+        self.install_ollama_models();
     }
 
     /// Reset to this identity's bundled catalog and reselect a valid default.
@@ -734,6 +741,71 @@ impl ModelsManager {
                 ));
             }
         }
+    }
+
+    /// Probe (or reuse the last probe) and merge local Ollama models into the live catalog.
+    fn install_ollama_models(&self) {
+        let cfg = self.inner.cfg.read().clone();
+        if !ollama::discovery_enabled(&cfg.models) {
+            return;
+        }
+        let discovered = {
+            let cached = self.inner.ollama.read().models.clone();
+            if !cached.is_empty() {
+                cached
+            } else {
+                let host = ollama::resolve_host(&cfg.models);
+                let models = ollama::probe(&host);
+                self.inner.ollama.write().models.clone_from(&models);
+                models
+            }
+        };
+        if discovered.is_empty() {
+            return;
+        }
+        let mut cat = self.inner.catalog.write();
+        ollama::merge_into_catalog(&mut cat.models, &discovered, &cfg);
+    }
+
+    /// Retry discovery if the first probe found nothing (daemon still starting).
+    /// No-ops without a Tokio runtime so unit tests that construct a manager stay hermetic.
+    fn spawn_ollama_discovery(&self) {
+        let cfg = self.inner.cfg.read().clone();
+        if !ollama::discovery_enabled(&cfg.models) {
+            return;
+        }
+        if !self.inner.ollama.read().models.is_empty() {
+            return;
+        }
+        let Ok(handle) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        let mgr = self.clone();
+        handle.spawn(async move {
+            for delay_secs in [2_u64, 8, 20] {
+                tokio::time::sleep(std::time::Duration::from_secs(delay_secs)).await;
+                let cfg = mgr.inner.cfg.read().clone();
+                if !ollama::discovery_enabled(&cfg.models) {
+                    return;
+                }
+                let host = ollama::resolve_host(&cfg.models);
+                let discovered =
+                    match tokio::task::spawn_blocking(move || ollama::probe(&host)).await {
+                        Ok(models) => models,
+                        Err(_) => continue,
+                    };
+                if discovered.is_empty() {
+                    continue;
+                }
+                mgr.inner.ollama.write().models.clone_from(&discovered);
+                {
+                    let mut cat = mgr.inner.catalog.write();
+                    ollama::merge_into_catalog(&mut cat.models, &discovered, &cfg);
+                }
+                mgr.notify_models_updated();
+                return;
+            }
+        });
     }
 
     /// Hot-reload the catalog from `~/.grok/models_cache.json` after an external write (config-watcher detected).
@@ -864,6 +936,7 @@ impl ModelsManager {
     }
 
     fn spawn_background_refresh_inner(&self, remote_fetch_enabled: bool) {
+        self.spawn_ollama_discovery();
         if self.inner.catalog.read().has_fetched_real_catalog {
             tracing::debug!(
                 "skipping startup background model refresh: fresh cache already loaded"
@@ -1169,6 +1242,8 @@ impl ModelsManager {
         if excludes_all {
             tracing::error!("allowed_models excludes all fetched models; prompts will be blocked");
         }
+
+        self.install_ollama_models();
 
         // Respect an explicit pre-catalog `/model` pick: auto-select the default on the first catalog only when the user hasn't chosen
         // Either way a now-invalid selection is replaced.

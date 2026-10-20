@@ -1062,6 +1062,7 @@ pub(super) fn dispatch_send_prompt_submission(
         // Reaching here means the command queued or passed text through, a real submission
         // Local-UI commands returned above and must keep the hook-block hold
         agent.credit_limit_stashed_prompt = None;
+        agent.ollama_fallback_stashed_prompt = None;
         agent.release_hook_block_hold();
         if consume_input {
             // Drain prompt images before clearing prompt state.
@@ -1156,6 +1157,7 @@ pub(super) fn dispatch_send_prompt_submission(
             // `clear_follow_ups` keeps `follow_up_seen` (it marks the turn boundary) so a stale re-delivery stays rejected
             agent.clear_follow_ups();
             agent.credit_limit_stashed_prompt = None;
+            agent.ollama_fallback_stashed_prompt = None;
 
             // `agent` borrow ends here; push the optimistic echo via `app`.
             let sid_str = session_id.0.to_string();
@@ -1185,6 +1187,7 @@ pub(super) fn dispatch_send_prompt_submission(
             .session
             .enqueue_prompt_with_skill_tokens(text.clone(), skill_token_ranges);
         agent.credit_limit_stashed_prompt = None;
+        agent.ollama_fallback_stashed_prompt = None;
         if consume_input {
             // Drain prompt images before clearing prompt state.
             drain_prompt_state_to_last_queued(agent);
@@ -1550,6 +1553,12 @@ pub(super) fn handle_prompt_response(
         if credit_limit_blocked && let Some(prompt) = agent.session.in_flight_prompt.clone() {
             agent.credit_limit_stashed_prompt = Some(prompt);
         }
+        if free_usage_blocked
+            && agent.ollama_fallback_stashed_prompt.is_none()
+            && let Some(prompt) = super::billing::failover_prompt(agent)
+        {
+            agent.ollama_fallback_stashed_prompt = Some(prompt);
+        }
         // Stash for AuthComplete after 401
         // Prefer in_flight; fall back to compact_held (cleared for cancel-rewind during auto-compact)
         // Skip if both None
@@ -1766,11 +1775,14 @@ pub(super) fn handle_prompt_response(
         // Driver-only by construction: viewers never receive a PromptResponse
         // No queue drain: queued prompts would fail on the same exhausted quota
         if free_usage_blocked {
-            let auth_method = app.login_method_id.as_ref().map(|id| id.0.to_string());
-            super::billing::open_free_usage_upsell(agent, auth_method);
             if let Some(p) = pending_adoption {
                 agent.discard_pending_adoption_updates(&p.prompt_id);
             }
+            if let Some(effects) = super::billing::try_ollama_usage_failover(agent, agent_id) {
+                return effects;
+            }
+            let auth_method = app.login_method_id.as_ref().map(|id| id.0.to_string());
+            super::billing::open_free_usage_upsell(agent, auth_method);
             return vec![];
         }
 

@@ -123,6 +123,48 @@ impl ModelState {
         self.available = new_available;
     }
 
+    /// Whether this catalog entry is a local Ollama model.
+    pub fn is_ollama_model(id: &acp::ModelId, info: &acp::ModelInfo) -> bool {
+        if xai_grok_shell::agent::ollama::is_ollama_catalog_key(id.0.as_ref()) {
+            return true;
+        }
+        info.meta.as_ref().is_some_and(|meta| {
+            meta.get(xai_grok_shell::agent::ollama::ACP_PROVIDER_META)
+                .and_then(|v| v.as_str())
+                == Some(xai_grok_shell::agent::ollama::ACP_PROVIDER)
+        })
+    }
+
+    /// Model to switch to when Grok usage is exhausted. Prefers the shell-stamped
+    /// fallback, else the first Ollama entry in the picker.
+    pub fn ollama_fallback_id(&self) -> Option<acp::ModelId> {
+        let stamped = self.available.iter().find(|(id, info)| {
+            Self::is_ollama_model(id, info)
+                && info.meta.as_ref().is_some_and(|meta| {
+                    meta.get(xai_grok_shell::agent::ollama::ACP_FALLBACK_META)
+                        .and_then(|v| v.as_bool())
+                        == Some(true)
+                })
+        });
+        if let Some((id, _)) = stamped {
+            return Some(id.clone());
+        }
+        self.available
+            .iter()
+            .find(|(id, info)| Self::is_ollama_model(id, info))
+            .map(|(id, _)| id.clone())
+    }
+
+    pub fn current_is_ollama(&self) -> bool {
+        let Some(current) = self.current.as_ref() else {
+            return false;
+        };
+        self.available
+            .get(current)
+            .is_some_and(|info| Self::is_ollama_model(current, info))
+            || xai_grok_shell::agent::ollama::is_ollama_catalog_key(current.0.as_ref())
+    }
+
     /// Set the current model and resolve reasoning effort from catalog meta.
     pub fn set_current(
         &mut self,

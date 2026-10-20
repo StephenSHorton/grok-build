@@ -860,6 +860,8 @@ pub struct AgentView {
     /// `CreditLimitRecheckComplete` to retry after a tier upgrade, and by
     /// the upsell's Try Again option.
     pub credit_limit_stashed_prompt: Option<crate::app::agent::InFlightPrompt>,
+    /// Prompt to resubmit after an automatic switch to a local Ollama model when Grok usage is exhausted.
+    pub ollama_fallback_stashed_prompt: Option<crate::app::agent::InFlightPrompt>,
     /// Complete prompt stashed from a turn that failed because the login expired (401 / re-auth). Used by the `AuthComplete` handler to auto-resubmit the prompt after a successful mid-session re-auth so the user doesn't have to retype it.
     pub reauth_stashed_prompt: Option<crate::app::agent::InFlightPrompt>,
     /// Currently active modal dialog (blocks all other input).

@@ -1028,6 +1028,22 @@ pub struct ModelsConfig {
     pub subagent_rate_limit_max_attempts: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stream_tool_calls: Option<bool>,
+    /// Discover pulled Ollama models and add them to `/model`. Default on (off in unit tests).
+    /// Also `GROK_OLLAMA_DISCOVERY`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ollama_discovery: Option<bool>,
+    /// Ollama daemon origin (`http://127.0.0.1:11434`). Also `GROK_OLLAMA_HOST` / `OLLAMA_HOST`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ollama_host: Option<String>,
+    /// Runtime context window (tokens) for discovered Ollama models. Capped by each
+    /// model's advertised max. Also `GROK_OLLAMA_CONTEXT` / `OLLAMA_CONTEXT_LENGTH`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ollama_context_window: Option<u64>,
+    /// Catalog key or Ollama tag to switch to when Grok free usage is exhausted.
+    /// Unset = auto-pick a discovered chat model. `off` / `false` / `0` disables failover.
+    /// Also `GROK_OLLAMA_FALLBACK`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fallback_on_usage_exhausted: Option<String>,
 }
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -4112,6 +4128,12 @@ pub struct ModelInfo {
     /// See [`LazinessDetectorPerModelConfig`].
     #[serde(default)]
     pub laziness_detector: LazinessDetectorPerModelConfig,
+    /// Runtime-only: this entry was auto-discovered from a local Ollama daemon.
+    #[serde(skip, default)]
+    pub is_local_ollama: bool,
+    /// Runtime-only: usage-exhausted failover should switch to this model.
+    #[serde(skip, default)]
+    pub is_usage_fallback: bool,
 }
 impl Default for ModelInfo {
     /// [`Self::fallback`] with an empty slug, so construction sites (tests especially) can use `..Default::default()`
@@ -4162,6 +4184,8 @@ impl ModelInfo {
             stream_tool_calls: None,
             reasoning_summary: None,
             laziness_detector: LazinessDetectorPerModelConfig::default(),
+            is_local_ollama: false,
+            is_usage_fallback: false,
         }
     }
     pub(crate) fn from_config(entry: &ModelEntryConfig) -> Self {
@@ -4203,6 +4227,8 @@ impl ModelInfo {
             stream_tool_calls: entry.stream_tool_calls,
             reasoning_summary: entry.reasoning_summary,
             laziness_detector: entry.laziness_detector.clone(),
+            is_local_ollama: false,
+            is_usage_fallback: false,
         }
     }
     /// Whether `id` is one of the ids this model sends: its own, or the one it uses at some effort.
@@ -4900,6 +4926,8 @@ pub(crate) fn resolve_aux_model_sampling_config(
                 stream_tool_calls: None,
                 reasoning_summary: None,
                 laziness_detector: LazinessDetectorPerModelConfig::default(),
+                is_local_ollama: false,
+                is_usage_fallback: false,
             },
             mtls_cert_dir: None,
             api_key: Some(bearer),
@@ -5127,6 +5155,8 @@ fn resolve_hidden_default_web_search_sampling_config(
             stream_tool_calls: None,
             reasoning_summary: None,
             laziness_detector: LazinessDetectorPerModelConfig::default(),
+            is_local_ollama: false,
+            is_usage_fallback: false,
         },
         mtls_cert_dir: None,
         api_key: None,
@@ -5225,6 +5255,18 @@ pub(crate) fn to_acp_model_info(
                     map.insert(
                         REASONING_EFFORTS_META_KEY.to_string(),
                         reasoning_efforts_meta_value(&info.reasoning_efforts),
+                    );
+                }
+                if info.is_local_ollama || crate::agent::ollama::is_ollama_catalog_key(key) {
+                    map.insert(
+                        crate::agent::ollama::ACP_PROVIDER_META.to_string(),
+                        serde_json::Value::String(crate::agent::ollama::ACP_PROVIDER.to_string()),
+                    );
+                }
+                if info.is_usage_fallback {
+                    map.insert(
+                        crate::agent::ollama::ACP_FALLBACK_META.to_string(),
+                        serde_json::Value::Bool(true),
                     );
                 }
                 if map.is_empty() { None } else { Some(map) }

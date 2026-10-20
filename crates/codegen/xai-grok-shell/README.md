@@ -1885,6 +1885,20 @@ temperature = 0.8
 
 **Ollama:**
 
+A running Ollama daemon with pulled chat models is discovered automatically
+(`ollama/<tag>` in `/model`). When Grok free usage is exhausted the session
+fails over to a discovered model. Optional knobs:
+
+```toml
+[models]
+# ollama_discovery = true
+# ollama_host = "http://127.0.0.1:11434"
+# ollama_context_window = 131072
+# fallback_on_usage_exhausted = "qwen3.8:27b"  # or "off"
+```
+
+You can still declare a model by hand:
+
 ```toml
 [model.ollama-codellama]
 model = "codellama"

@@ -418,6 +418,10 @@ User-level configuration lives in `$GROK_HOME/config.toml` (default `~/.grok/con
 | `models.allowed_models` | `string[]` | `pin` | `user` | Glob allowlist for the model picker, default, and `-m`. Empty means no restriction. |
 | `models.default` | `string` | `pin` | `user` | Model used for new sessions. Also `GROK_DEFAULT_MODEL`, `--model`, `-m`. |
 | `models.default_reasoning_effort` | `string` | `yes` | `user` | Default reasoning effort for the default model when the model supports it. |
+| `models.fallback_on_usage_exhausted` | `string` | `yes` | `user` | Ollama catalog key or tag to switch to when Grok free usage is exhausted. Unset auto-picks a discovered chat model. `off` disables failover. Also `GROK_OLLAMA_FALLBACK`. |
+| `models.ollama_context_window` | `number` | `yes` | `user` | Runtime context tokens for discovered Ollama models, capped by each model's advertised max. Also `GROK_OLLAMA_CONTEXT` / `OLLAMA_CONTEXT_LENGTH`. |
+| `models.ollama_discovery` | `boolean` | `yes` | `user` | Probe a local Ollama daemon and add pulled chat models to `/model`. Default on. Also `GROK_OLLAMA_DISCOVERY`. |
+| `models.ollama_host` | `string` | `yes` | `user` | Ollama origin, default `http://127.0.0.1:11434`. Also `GROK_OLLAMA_HOST` / `OLLAMA_HOST`. |
 | `models.disabled_models` | `string[]` | `yes` | `user` | Remove these model IDs from the catalog. Wins over `hidden_models`. |
 | `models.extra_headers` | `map<string,string>` | `yes` | `user` | Request headers applied to every model; per-model keys win. |
 | `models.hidden_models` | `string[]` | `yes` | `user` | Hide these model IDs from the picker; `-m` can still select them. |

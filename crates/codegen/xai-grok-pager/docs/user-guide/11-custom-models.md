@@ -273,7 +273,19 @@ context_window = 500000
 
 ### Ollama (Local Models)
 
-Run models locally with [Ollama](https://ollama.ai):
+If [Ollama](https://ollama.ai) is running locally with at least one chat model pulled, Grok discovers those models at startup and adds them to `/model` as `ollama/<tag>` (for example `ollama/qwen3.8:27b`). No `config.toml` entry is required.
+
+When Grok free usage is exhausted, the session switches to a discovered Ollama model (preferring one that advertises tools) and retries the failed prompt. Set `fallback_on_usage_exhausted` to pin a tag, or `off` to keep the SuperGrok paywall instead:
+
+```toml
+[models]
+# ollama_discovery = true            # default on
+# ollama_host = "http://127.0.0.1:11434"
+# ollama_context_window = 131072     # or GROK_OLLAMA_CONTEXT / OLLAMA_CONTEXT_LENGTH
+# fallback_on_usage_exhausted = "qwen3.8:27b"
+```
+
+You can still declare a model by hand:
 
 ```toml
 [model.ollama-codellama]
@@ -282,7 +294,7 @@ base_url = "http://localhost:11434/v1"
 name = "CodeLlama (Ollama)"
 ```
 
-Make sure Ollama is running (`ollama serve`) and the model is pulled (`ollama pull codellama`).
+Make sure Ollama is running (`ollama serve`) and the model is pulled (`ollama pull …`). Env overrides: `GROK_OLLAMA_DISCOVERY`, `GROK_OLLAMA_HOST` / `OLLAMA_HOST`, `GROK_OLLAMA_FALLBACK`.
 
 ### Together AI
 
