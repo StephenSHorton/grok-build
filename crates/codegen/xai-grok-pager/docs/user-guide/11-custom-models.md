@@ -77,7 +77,7 @@ Grok supports three API backends. Set `api_backend` in your `[model.*]` config t
 
 When you omit `api_backend`, Grok uses `chat_completions`.
 
-To send provider-specific authentication or version headers -- for example, Anthropic's `x-api-key` -- use the `extra_headers` field described below. Grok sends those headers verbatim with every request to the endpoint.
+To send the API key as an `x-api-key` header instead of `Authorization: Bearer` -- as Anthropic requires -- set `auth_scheme = "x_api_key"`. For other provider-specific headers, such as `anthropic-version`, use the `extra_headers` field described below. Grok sends those headers verbatim with every request to the endpoint.
 
 ---
 
@@ -93,13 +93,14 @@ name = "Display Name"                     # Shown in the model picker
 description = "Model description"          # Optional description
 api_key = "sk-..."                        # API key for this provider (optional)
 env_key = "XAI_API_KEY"                   # Env var holding the API key (optional; string or array)
+auth_scheme = "bearer"                    # How the key is sent: "bearer" (default) or "x_api_key"
 api_backend = "chat_completions"          # "chat_completions", "responses", or "messages"
 reasoning_summary = "concise"             # Responses API only: "none", "auto", "concise", or "detailed"
 temperature = 0.7                         # Sampling temperature
 top_p = 0.95                              # Nucleus sampling parameter
 max_completion_tokens = 8192              # Maximum tokens per response
 context_window = 128000                   # Total context window in tokens
-extra_headers = { "x-api-key" = "sk-..." } # Extra request headers, sent verbatim (optional)
+extra_headers = { "anthropic-version" = "2023-06-01" } # Extra request headers, sent verbatim (optional)
 query_params = { api-version = "2026-07-22" } # Query params appended to every request URL (optional)
 env_http_headers = { "X-Tenant" = "TENANT_TOKEN" }    # Headers from env vars, resolved at client build (optional)
 ```
@@ -255,10 +256,13 @@ base_url = "https://api.anthropic.com/v1"
 name = "Claude Opus 4.6"
 api_backend = "messages"
 context_window = 200000
-extra_headers = { "x-api-key" = "sk-ant-...", "anthropic-version" = "2023-06-01" }
+max_completion_tokens = 32000
+env_key = "ANTHROPIC_API_KEY"
+auth_scheme = "x_api_key"
+extra_headers = { "anthropic-version" = "2023-06-01" }
 ```
 
-The `messages` backend uses the Anthropic Messages protocol. Anthropic authenticates with an `x-api-key` header rather than `Authorization: Bearer`, so pass your key through `extra_headers`, which Grok sends verbatim.
+The `messages` backend uses the Anthropic Messages protocol. Anthropic authenticates with an `x-api-key` header rather than `Authorization: Bearer`, so set `auth_scheme = "x_api_key"`. Supply the key through `env_key` or `api_key`, not `extra_headers`. A key that appears only in a header does not count as the model's own credential. Neither does an `env_key` whose variable is unset or empty. In either case Grok falls back to your `grok login` session or `XAI_API_KEY` for that model and sends it to the Anthropic host. Set `max_completion_tokens` to a value the model supports: when it is unset, the `messages` backend requests 128000 output tokens.
 
 ### OpenAI (Chat Completions)
 

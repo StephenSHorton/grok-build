@@ -3514,6 +3514,8 @@ pub struct ConfigModelOverride {
     /// Name of a `[auth_provider.<name>]` credential helper that mints this model's bearer token.
     /// Static `api_key` / `env_key` win when both are set.
     pub auth_provider: Option<String>,
+    /// How the resolved credential is sent: `bearer` (default) or `x_api_key` (e.g. Anthropic's Messages API).
+    pub auth_scheme: Option<AuthScheme>,
     pub model_provider: Option<String>,
     pub api_base_url: Option<String>,
     pub max_completion_tokens: Option<u32>,
@@ -3598,6 +3600,9 @@ impl ConfigModelOverride {
         }
         if let Some(ref v) = self.api_backend {
             entry.info.api_backend = v.clone();
+        }
+        if let Some(v) = self.auth_scheme {
+            entry.info.auth_scheme = v;
         }
         if !self.extra_headers.is_empty() {
             entry.info.extra_headers = self.extra_headers.clone();
@@ -4361,11 +4366,17 @@ pub(crate) fn resolve_credentials(
             info.base_url.clone(),
             xai_chat_state::AuthType::SessionToken,
         )
-    } else if let Ok(key) = crate::agent::auth_method::read_xai_api_key_env() {
-        let url = model
-            .api_base_url
-            .clone()
-            .unwrap_or_else(|| info.base_url.clone());
+    } else if let Some((key, url)) = crate::agent::auth_method::read_xai_api_key_env()
+        .ok()
+        .map(|key| {
+            let url = model
+                .api_base_url
+                .clone()
+                .unwrap_or_else(|| info.base_url.clone());
+            (key, url)
+        })
+        .filter(|(_, url)| !xai_grok_login::backend::is_third_party_ai_host(url))
+    {
         (Some(key), url, xai_chat_state::AuthType::ApiKey)
     } else {
         if let Some(ref env_keys) = model.env_key

@@ -284,13 +284,16 @@ pub(crate) enum ModelByok {
 }
 /// Whether this session and model combination uses a refreshable session token. Gates on stable inputs, not `Credentials.auth_type`. `model_byok` still excludes genuine per-model BYOK, whose keys are not refreshable.
 /// It must **not** demote a live session to non-refreshable api-key mode. Instead, `Unknown` refreshes only when `endpoint_is_first_party`.
-/// On a first-party host (cli-chat-proxy / first-party API) the session token cannot leak to a third-party BYOK endpoint. A definite `NotByok` always refreshes (it only ever routes to the session endpoint); a definite `Byok` never does.
+/// On a first-party host (cli-chat-proxy / first-party API) the session token cannot leak to a third-party BYOK endpoint. A definite `NotByok` refreshes unless the endpoint is another model vendor's API; a definite `Byok` never does.
+/// `endpoint_is_third_party_ai` (`xai_grok_login::backend::is_third_party_ai_host`) catches a NotByok model whose key is missing, so the session is not stamped onto e.g. api.anthropic.com.
 pub(crate) fn session_token_auth_gate(
     is_session_based_method: bool,
     model_byok: ModelByok,
     endpoint_is_first_party: bool,
+    endpoint_is_third_party_ai: bool,
 ) -> bool {
     is_session_based_method
+        && !endpoint_is_third_party_ai
         && match model_byok {
             ModelByok::NotByok => true,
             ModelByok::Byok => false,

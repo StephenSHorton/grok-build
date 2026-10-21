@@ -31,8 +31,9 @@ impl AuthBackend for GrokAuthBackend {
 
     /// Some customers run their own gateway and sign in there with the session xAI issued them, so a list of allowed hosts would lock them out.
     /// The models cache stops one backend's models from being used by another: it remembers the URL each entry came from and ignores the rest.
-    fn may_receive_session(&self, _url: &str) -> bool {
-        true
+    /// Another vendor's API (e.g. a `[model.*]` pointed at api.anthropic.com without its own key) never gets the xAI session.
+    fn may_receive_session(&self, url: &str) -> bool {
+        !super::is_third_party_ai_host(url)
     }
 
     fn login_host(&self, config: &GrokComConfig) -> String {

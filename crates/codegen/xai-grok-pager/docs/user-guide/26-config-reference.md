@@ -391,6 +391,7 @@ User-level configuration lives in `$GROK_HOME/config.toml` (default `~/.grok/con
 | `model.<id>.api_base_url` | `string` | `yes` | `user` | Alternate API base used with XAI_API_KEY resolution. |
 | `model.<id>.api_key` | `string` | `yes` | `user` | Inline API key. Prefer `env_key`. Not a secret to put in a shared repo. |
 | `model.<id>.auth_provider` | `string` | `yes` | `user` | Name of a `[auth_provider.<name>]` helper that mints this model's bearer token. |
+| `model.<id>.auth_scheme` | `bearer / x_api_key` | `yes` | `user` | How the resolved key is sent: `Authorization: Bearer` (default) or an `x-api-key` header (Anthropic). Unset inherits the `[model_providers.<id>]` value. |
 | `model.<id>.auto_compact_threshold_percent` | `integer` | `yes` | `user` | Per-model auto-compact threshold (0-100). |
 | `model.<id>.base_url` | `string` | `yes` | `user` | Provider endpoint base URL. |
 | `model.<id>.compaction_at_tokens` | `number / table` | `yes` | `user` | Token threshold that triggers compaction for this model. |

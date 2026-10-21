@@ -57,9 +57,100 @@ pub fn host_of(url: &str) -> String {
         .unwrap_or(url)
         .to_owned()
 }
+/// Hosts of model vendors other than xAI; an xAI credential (session token or `XAI_API_KEY`) is never sent to them.
+/// A denylist, not an allowlist: customer gateways must keep receiving the session (see `GrokAuthBackend::may_receive_session`).
+const THIRD_PARTY_AI_DOMAINS: &[&str] = &[
+    "anthropic.com",
+    "claude.ai",
+    "openai.com",
+    "openrouter.ai",
+    "mistral.ai",
+    "groq.com",
+    "together.xyz",
+    "together.ai",
+    "fireworks.ai",
+    "deepseek.com",
+    "cohere.com",
+    "cohere.ai",
+    "perplexity.ai",
+    "huggingface.co",
+    "cerebras.ai",
+    "deepinfra.com",
+    "moonshot.ai",
+    "moonshot.cn",
+    "dashscope.aliyuncs.com",
+    "generativelanguage.googleapis.com",
+    // Cloud-hosted Claude / OpenAI / Gemini endpoints.
+    "aiplatform.googleapis.com",
+    "openai.azure.com",
+    "services.ai.azure.com",
+    "cognitiveservices.azure.com",
+];
+/// Whether `url` points at another model vendor's API (the host or any subdomain of a [`THIRD_PARTY_AI_DOMAINS`] entry).
+pub fn is_third_party_ai_host(url: &str) -> bool {
+    let Some(host) = url::Url::parse(url).ok().and_then(|u| {
+        u.host_str()
+            .map(|h| h.trim_end_matches('.').to_ascii_lowercase())
+    }) else {
+        return false;
+    };
+    let in_domain = |domain: &str| {
+        host == domain
+            || host
+                .strip_suffix(domain)
+                .is_some_and(|prefix| prefix.ends_with('.'))
+    };
+    THIRD_PARTY_AI_DOMAINS.iter().any(|domain| in_domain(domain))
+        // Regional Vertex AI hosts: `us-east5-aiplatform.googleapis.com`.
+        || host.ends_with("-aiplatform.googleapis.com")
+        // Bedrock only; other `amazonaws.com` hosts (API Gateway, ELB) can be customer gateways.
+        || (in_domain("amazonaws.com")
+            && host.split('.').next().is_some_and(|label| label.starts_with("bedrock")))
+}
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn third_party_ai_hosts_match_domain_and_subdomains_only() {
+        assert!(is_third_party_ai_host("https://api.anthropic.com/v1"));
+        assert!(is_third_party_ai_host("https://API.Anthropic.com./v1"));
+        assert!(is_third_party_ai_host("https://api.openai.com/v1"));
+        assert!(is_third_party_ai_host(
+            "https://generativelanguage.googleapis.com/v1beta/openai"
+        ));
+        assert!(!is_third_party_ai_host("https://notanthropic.com/v1"));
+        assert!(!is_third_party_ai_host(
+            "https://anthropic.com.evil.test/v1"
+        ));
+        assert!(!is_third_party_ai_host("https://api.x.ai/v1"));
+        assert!(!is_third_party_ai_host(
+            "https://cli-chat-proxy.grok.com/v1"
+        ));
+        assert!(!is_third_party_ai_host("https://gateway.corp.example/v1"));
+        assert!(!is_third_party_ai_host("https://storage.googleapis.com/v1"));
+        assert!(!is_third_party_ai_host("not a url"));
+        assert!(is_third_party_ai_host(
+            "https://us-east5-aiplatform.googleapis.com/v1/projects/p/locations/us-east5"
+        ));
+        assert!(is_third_party_ai_host(
+            "https://aiplatform.googleapis.com/v1"
+        ));
+        assert!(is_third_party_ai_host(
+            "https://bedrock-runtime.us-east-1.amazonaws.com"
+        ));
+        assert!(is_third_party_ai_host(
+            "https://my-res.openai.azure.com/openai"
+        ));
+        assert!(is_third_party_ai_host(
+            "https://my-res.services.ai.azure.com/models"
+        ));
+        assert!(!is_third_party_ai_host(
+            "https://abc123.execute-api.us-east-1.amazonaws.com/v1"
+        ));
+        assert!(!is_third_party_ai_host(
+            "https://gateway.azurewebsites.net/v1"
+        ));
+    }
     #[test]
     fn host_of_drops_the_scheme_and_leaves_the_rest_alone() {
         assert_eq!(host_of("https://example.test"), "example.test");

@@ -5,6 +5,7 @@ use indexmap::IndexMap;
 use super::config::{ConfigModelOverride, EnvKeys};
 use super::config_model_override_parse::{ConfigWarning, ConfigWarningKind};
 use crate::sampling::ApiBackend;
+use xai_grok_sampler::AuthScheme;
 
 #[derive(Clone, Debug, Default, serde::Deserialize)]
 #[serde(default)]
@@ -14,6 +15,8 @@ pub struct ModelProviderConfig {
     pub env_key: Option<EnvKeys>,
     pub api_key: Option<String>,
     pub api_backend: Option<ApiBackend>,
+    /// Credential header style; inherited by models that set none of their own.
+    pub auth_scheme: Option<AuthScheme>,
     pub extra_headers: IndexMap<String, String>,
     /// Query parameters folded into every request URL; inherited by models.
     pub query_params: IndexMap<String, String>,
@@ -183,6 +186,7 @@ impl ConfigModelOverride {
             env_key,
             api_key,
             api_backend,
+            auth_scheme,
             extra_headers,
             query_params,
             env_http_headers,
@@ -198,6 +202,7 @@ impl ConfigModelOverride {
         merged.base_url = merged.base_url.or_else(|| base_url.clone());
         merged.api_base_url = merged.api_base_url.or_else(|| api_base_url.clone());
         merged.api_backend = merged.api_backend.or_else(|| api_backend.clone());
+        merged.auth_scheme = merged.auth_scheme.or(*auth_scheme);
         merged.max_request_bytes = merged.max_request_bytes.or(*max_request_bytes);
         // Inherited wholesale only when the model sets none of its own.
         if merged.context_window.is_none() && merged.context_windows.is_none() {
@@ -240,6 +245,8 @@ impl ConfigModelOverride {
 #[cfg(test)]
 mod tests {
     use std::num::NonZeroU64;
+
+    use xai_grok_sampler::AuthScheme;
 
     use crate::agent::config::{
         Config, resolve_credentials, resolve_model_list, sampling_config_for_model,
@@ -812,6 +819,93 @@ mod tests {
         assert_eq!(
             model.api_base_url.as_deref(),
             Some("https://gateway.example/api")
+        );
+    }
+
+    #[test]
+    fn model_auth_scheme_from_toml_reaches_sampler() {
+        let raw_config: toml::Value = toml::from_str(
+            r#"
+            [model.claude]
+            model = "claude-test"
+            base_url = "https://api.anthropic.com/v1"
+            api_backend = "messages"
+            api_key = "sk-ant-test"
+            auth_scheme = "x_api_key"
+            "#,
+        )
+        .unwrap();
+
+        let cfg = Config::new_from_toml_cfg(&raw_config).expect("config should parse");
+        assert!(
+            cfg.config_warnings.is_empty(),
+            "auth_scheme must be a recognized field: {:?}",
+            cfg.config_warnings
+        );
+        let resolved = resolve_model_list(&cfg, None);
+        let model = resolved.get("claude").expect("model should exist");
+        assert_eq!(model.info.auth_scheme, AuthScheme::XApiKey);
+        let creds = resolve_credentials(model, None);
+        assert_eq!(creds.auth_scheme, AuthScheme::XApiKey);
+        assert_eq!(creds.api_key.as_deref(), Some("sk-ant-test"));
+        let config = sampling_config_for_model(model, creds, None, None, None, None);
+        assert_eq!(config.auth_scheme, AuthScheme::XApiKey);
+        let client = xai_grok_sampler::SamplingClient::new(config).expect("client should build");
+        assert_eq!(client.auth_info().auth_type, "x-api-key");
+    }
+
+    #[test]
+    fn model_inherits_provider_auth_scheme_unless_set() {
+        let raw_config: toml::Value = toml::from_str(
+            r#"
+            [model_providers.anthropic]
+            base_url = "https://api.anthropic.com/v1"
+            api_backend = "messages"
+            api_key = "sk-ant-test"
+            auth_scheme = "x_api_key"
+
+            [model.inherits]
+            model = "a"
+            model_provider = "anthropic"
+
+            [model.overrides]
+            model = "b"
+            model_provider = "anthropic"
+            auth_scheme = "bearer"
+            "#,
+        )
+        .unwrap();
+
+        let cfg = Config::new_from_toml_cfg(&raw_config).expect("config should parse");
+        assert!(cfg.config_warnings.is_empty(), "{:?}", cfg.config_warnings);
+        let resolved = resolve_model_list(&cfg, None);
+        assert_eq!(
+            resolved.get("inherits").unwrap().info.auth_scheme,
+            AuthScheme::XApiKey
+        );
+        assert_eq!(
+            resolved.get("overrides").unwrap().info.auth_scheme,
+            AuthScheme::Bearer
+        );
+    }
+
+    #[test]
+    fn model_without_auth_scheme_defaults_to_bearer() {
+        let raw_config: toml::Value = toml::from_str(
+            r#"
+            [model.plain]
+            model = "m"
+            base_url = "https://api.example.com/v1"
+            api_key = "sk-test"
+            "#,
+        )
+        .unwrap();
+
+        let cfg = Config::new_from_toml_cfg(&raw_config).expect("config should parse");
+        let resolved = resolve_model_list(&cfg, None);
+        assert_eq!(
+            resolved.get("plain").unwrap().info.auth_scheme,
+            AuthScheme::Bearer
         );
     }
 
