@@ -1646,6 +1646,37 @@ fn resolve_credentials_empty_env_key_falls_through_to_global_key() {
     assert_eq!(creds.auth_type, AuthType::ApiKey);
     assert_eq!(creds.api_key.as_deref(), Some(sentinel));
 }
+/// A keyless model aimed at another vendor (e.g. `ANTHROPIC_API_KEY` not exported) must not borrow xAI credentials.
+#[test]
+#[serial]
+fn resolve_credentials_never_sends_xai_credentials_to_third_party_ai_host() {
+    use crate::agent::auth_method::{LEGACY_XAI_API_KEY_ENV_VAR, XAI_API_KEY_ENV_VAR};
+    use xai_grok_test_support::EnvGuard;
+    let unset_var = "GROK_TEST_UNSET_ANTHROPIC_KEY";
+    let _unset = EnvGuard::unset(unset_var);
+    let _global = EnvGuard::set(XAI_API_KEY_ENV_VAR, "xai-global-sentinel-key");
+    let _legacy = EnvGuard::unset(LEGACY_XAI_API_KEY_ENV_VAR);
+    let mut model = test_model_entry("claude", "https://api.anthropic.com/v1", None, None, None);
+    model.env_key = Some(EnvKeys::single(unset_var));
+    model.info.api_backend = ApiBackend::Messages;
+    model.info.auth_scheme = AuthScheme::XApiKey;
+    assert!(!model.has_own_credentials());
+    let creds = resolve_credentials(&model, Some("session-jwt"));
+    assert_eq!(creds.api_key, None);
+    assert_eq!(creds.base_url, "https://api.anthropic.com/v1");
+    // A custom gateway keeps both fallbacks.
+    let gateway = test_model_entry("m", "https://gateway.corp.example/v1", None, None, None);
+    assert_eq!(
+        resolve_credentials(&gateway, Some("session-jwt"))
+            .api_key
+            .as_deref(),
+        Some("session-jwt")
+    );
+    assert_eq!(
+        resolve_credentials(&gateway, None).api_key.as_deref(),
+        Some("xai-global-sentinel-key")
+    );
+}
 #[test]
 fn resolve_credentials_empty_api_key_falls_through_to_session() {
     use xai_chat_state::AuthType;

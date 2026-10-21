@@ -57,9 +57,62 @@ pub fn host_of(url: &str) -> String {
         .unwrap_or(url)
         .to_owned()
 }
+/// Hosts of model vendors other than xAI; an xAI credential (session token or `XAI_API_KEY`) is never sent to them.
+/// A denylist, not an allowlist: customer gateways must keep receiving the session (see `GrokAuthBackend::may_receive_session`).
+const THIRD_PARTY_AI_DOMAINS: &[&str] = &[
+    "anthropic.com",
+    "claude.ai",
+    "openai.com",
+    "openrouter.ai",
+    "mistral.ai",
+    "groq.com",
+    "together.xyz",
+    "together.ai",
+    "fireworks.ai",
+    "deepseek.com",
+    "cohere.com",
+    "cohere.ai",
+    "perplexity.ai",
+    "generativelanguage.googleapis.com",
+];
+/// Whether `url` points at another model vendor's API (the host or any subdomain of a [`THIRD_PARTY_AI_DOMAINS`] entry).
+pub fn is_third_party_ai_host(url: &str) -> bool {
+    let Some(host) = url::Url::parse(url).ok().and_then(|u| {
+        u.host_str()
+            .map(|h| h.trim_end_matches('.').to_ascii_lowercase())
+    }) else {
+        return false;
+    };
+    THIRD_PARTY_AI_DOMAINS.iter().any(|domain| {
+        host == *domain
+            || host
+                .strip_suffix(domain)
+                .is_some_and(|prefix| prefix.ends_with('.'))
+    })
+}
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn third_party_ai_hosts_match_domain_and_subdomains_only() {
+        assert!(is_third_party_ai_host("https://api.anthropic.com/v1"));
+        assert!(is_third_party_ai_host("https://API.Anthropic.com./v1"));
+        assert!(is_third_party_ai_host("https://api.openai.com/v1"));
+        assert!(is_third_party_ai_host(
+            "https://generativelanguage.googleapis.com/v1beta/openai"
+        ));
+        assert!(!is_third_party_ai_host("https://notanthropic.com/v1"));
+        assert!(!is_third_party_ai_host(
+            "https://anthropic.com.evil.test/v1"
+        ));
+        assert!(!is_third_party_ai_host("https://api.x.ai/v1"));
+        assert!(!is_third_party_ai_host(
+            "https://cli-chat-proxy.grok.com/v1"
+        ));
+        assert!(!is_third_party_ai_host("https://gateway.corp.example/v1"));
+        assert!(!is_third_party_ai_host("https://storage.googleapis.com/v1"));
+        assert!(!is_third_party_ai_host("not a url"));
+    }
     #[test]
     fn host_of_drops_the_scheme_and_leaves_the_rest_alone() {
         assert_eq!(host_of("https://example.test"), "example.test");

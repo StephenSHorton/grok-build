@@ -4366,11 +4366,17 @@ pub(crate) fn resolve_credentials(
             info.base_url.clone(),
             xai_chat_state::AuthType::SessionToken,
         )
-    } else if let Ok(key) = crate::agent::auth_method::read_xai_api_key_env() {
-        let url = model
-            .api_base_url
-            .clone()
-            .unwrap_or_else(|| info.base_url.clone());
+    } else if let Some((key, url)) = crate::agent::auth_method::read_xai_api_key_env()
+        .ok()
+        .map(|key| {
+            let url = model
+                .api_base_url
+                .clone()
+                .unwrap_or_else(|| info.base_url.clone());
+            (key, url)
+        })
+        .filter(|(_, url)| !xai_grok_login::backend::is_third_party_ai_host(url))
+    {
         (Some(key), url, xai_chat_state::AuthType::ApiKey)
     } else {
         if let Some(ref env_keys) = model.env_key
