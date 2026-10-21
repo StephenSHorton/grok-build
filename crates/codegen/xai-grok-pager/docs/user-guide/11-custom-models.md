@@ -262,7 +262,7 @@ auth_scheme = "x_api_key"
 extra_headers = { "anthropic-version" = "2023-06-01" }
 ```
 
-The `messages` backend uses the Anthropic Messages protocol. Anthropic authenticates with an `x-api-key` header rather than `Authorization: Bearer`, so set `auth_scheme = "x_api_key"`. Supply the key through `env_key` or `api_key`, not `extra_headers`. A key that appears only in a header does not count as the model's own credential, so Grok may fall back to your `grok login` session or `XAI_API_KEY` for that model. Set `max_completion_tokens` to a value the model supports: when it is unset, the `messages` backend requests 128000 output tokens.
+The `messages` backend uses the Anthropic Messages protocol. Anthropic authenticates with an `x-api-key` header rather than `Authorization: Bearer`, so set `auth_scheme = "x_api_key"`. Supply the key through `env_key` or `api_key`, not `extra_headers`. A key that appears only in a header does not count as the model's own credential. Neither does an `env_key` whose variable is unset or empty. In either case Grok falls back to your `grok login` session or `XAI_API_KEY` for that model and sends it to the Anthropic host. Set `max_completion_tokens` to a value the model supports: when it is unset, the `messages` backend requests 128000 output tokens.
 
 ### OpenAI (Chat Completions)
 
