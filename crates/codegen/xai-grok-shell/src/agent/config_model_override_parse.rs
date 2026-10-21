@@ -729,6 +729,7 @@ mod tests {
             api_key: Some("key".into()),
             env_key: Some(crate::agent::config::EnvKeys::single("ENV_KEY")),
             auth_provider: Some("corp-gateway".into()),
+            auth_scheme: Some(xai_grok_sampler::AuthScheme::XApiKey),
             model_provider: Some("gateway".into()),
             api_base_url: Some("https://api.example.com".into()),
             max_completion_tokens: Some(1024),
