@@ -73,7 +73,18 @@ const THIRD_PARTY_AI_DOMAINS: &[&str] = &[
     "cohere.com",
     "cohere.ai",
     "perplexity.ai",
+    "huggingface.co",
+    "cerebras.ai",
+    "deepinfra.com",
+    "moonshot.ai",
+    "moonshot.cn",
+    "dashscope.aliyuncs.com",
     "generativelanguage.googleapis.com",
+    // Cloud-hosted Claude / OpenAI / Gemini endpoints.
+    "aiplatform.googleapis.com",
+    "openai.azure.com",
+    "services.ai.azure.com",
+    "cognitiveservices.azure.com",
 ];
 /// Whether `url` points at another model vendor's API (the host or any subdomain of a [`THIRD_PARTY_AI_DOMAINS`] entry).
 pub fn is_third_party_ai_host(url: &str) -> bool {
@@ -83,12 +94,18 @@ pub fn is_third_party_ai_host(url: &str) -> bool {
     }) else {
         return false;
     };
-    THIRD_PARTY_AI_DOMAINS.iter().any(|domain| {
-        host == *domain
+    let in_domain = |domain: &str| {
+        host == domain
             || host
                 .strip_suffix(domain)
                 .is_some_and(|prefix| prefix.ends_with('.'))
-    })
+    };
+    THIRD_PARTY_AI_DOMAINS.iter().any(|domain| in_domain(domain))
+        // Regional Vertex AI hosts: `us-east5-aiplatform.googleapis.com`.
+        || host.ends_with("-aiplatform.googleapis.com")
+        // Bedrock only; other `amazonaws.com` hosts (API Gateway, ELB) can be customer gateways.
+        || (in_domain("amazonaws.com")
+            && host.split('.').next().is_some_and(|label| label.starts_with("bedrock")))
 }
 #[cfg(test)]
 mod tests {
@@ -112,6 +129,27 @@ mod tests {
         assert!(!is_third_party_ai_host("https://gateway.corp.example/v1"));
         assert!(!is_third_party_ai_host("https://storage.googleapis.com/v1"));
         assert!(!is_third_party_ai_host("not a url"));
+        assert!(is_third_party_ai_host(
+            "https://us-east5-aiplatform.googleapis.com/v1/projects/p/locations/us-east5"
+        ));
+        assert!(is_third_party_ai_host(
+            "https://aiplatform.googleapis.com/v1"
+        ));
+        assert!(is_third_party_ai_host(
+            "https://bedrock-runtime.us-east-1.amazonaws.com"
+        ));
+        assert!(is_third_party_ai_host(
+            "https://my-res.openai.azure.com/openai"
+        ));
+        assert!(is_third_party_ai_host(
+            "https://my-res.services.ai.azure.com/models"
+        ));
+        assert!(!is_third_party_ai_host(
+            "https://abc123.execute-api.us-east-1.amazonaws.com/v1"
+        ));
+        assert!(!is_third_party_ai_host(
+            "https://gateway.azurewebsites.net/v1"
+        ));
     }
     #[test]
     fn host_of_drops_the_scheme_and_leaves_the_rest_alone() {
